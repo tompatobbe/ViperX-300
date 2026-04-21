@@ -6,8 +6,8 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 urdf_path = os.path.join(script_dir, 'vx300s.urdf')
 
-# Load the model with root joint (required for most URDF files)
-model = pin.buildModelFromUrdf(urdf_path, root_joint=pin.JointModelFreeFlyer())
+# Load the model
+model = pin.buildModelFromUrdf(urdf_path)
 print(f"Model loaded with {model.njoints} joints and {model.nq} DOF\n")
 
 # Create data for the model
