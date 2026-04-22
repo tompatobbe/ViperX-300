@@ -53,13 +53,13 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 #  the zero-pose alignment (common in real robots).
 #
 DH_TABLE = np.array([
-    #   θ_off     d       a       α        Joint name
-    [    0.0,  126.75,    0.0,  -90.0  ],  # 1  Waist
-    [    0.0,    0.0,    0.0,    0.0  ],  # 2  Shoulder
-    [    0.0,    0.0,  305.94,    90.0  ],  # 3  Elbow
-    [    100.0,  0.0,    0.0,  0.0  ],  # 4  Wrist Rotate
-    [    0.0,    0.0,    0.0,   0.0  ],  # 5  Wrist Pitch
-    [    0.0,   0.0,    0.0,  0.0  ],  # 6  Wrist Roll (to EE)
+    #   α(°)     a(mm)    d(mm)   θ_off(°)   Joint name
+    [    0.0,    0.0,   126.75,    0.0   ],  # 1  Waist
+    [  -90.0,    0.0,     0.0,   78.66  ],  # 2  Shoulder
+    [    0.0,  305.94,    0.0,   11.34  ],  # 3  Elbow
+    [  -90.0,    0.0,   300.0,    0.0   ],  # 4  Wrist Rotate
+    [   90.0,    0.0,     0.0,    0.0   ],  # 5  Wrist Pitch
+    [  -90.0,    0.0,     0.0,    0.0   ],  # 6  Wrist Roll (to EE)
 ])
 
 JOINT_NAMES  = ["Waist", "Shoulder", "Elbow", "Wrist Rotate", "Wrist Pitch", "Wrist Roll"]
@@ -195,17 +195,17 @@ class DHVisualizer:
         self.ax3d.set_facecolor(BG_DARK)
 
         # ── DH table (top-right) ──────────────────────────────────────────
-        self.ax_tbl = self.fig.add_axes([0.58, 0.55, 0.40, 0.40])
+        self.ax_tbl = self.fig.add_axes([0.58, 0.58, 0.40, 0.40])
         self.ax_tbl.set_facecolor(BG_PANEL)
         self.ax_tbl.axis('off')
 
         # ── Legend (mid-right) ────────────────────────────────────────────
-        self.ax_leg = self.fig.add_axes([0.58, 0.40, 0.40, 0.14])
+        self.ax_leg = self.fig.add_axes([0.58, 0.50, 0.40, 0.14])
         self.ax_leg.set_facecolor(BG_PANEL)
         self.ax_leg.axis('off')
 
         # ── EE readout (bottom-right, above sliders) ──────────────────────
-        self.ax_ee = self.fig.add_axes([0.58, 0.32, 0.40, 0.075])
+        self.ax_ee = self.fig.add_axes([0.58, 0.45, 0.40, 0.075])
         self.ax_ee.set_facecolor(BG_PANEL)
         self.ax_ee.axis('off')
 
@@ -228,7 +228,7 @@ class DHVisualizer:
 
     def _build_sliders(self):
         self.sliders = []
-        y0, dy = 0.265, 0.048
+        y0, dy = 0.365, 0.048
         for i in range(N_JOINTS):
             lo, hi = JOINT_LIMITS[i]
             ax_s = self.fig.add_axes(
@@ -259,7 +259,7 @@ class DHVisualizer:
         ax = self.ax_leg
         ax.set_xlim(0, 1); ax.set_ylim(0, 1)
 
-        ax.text(0.5, 0.95, "AXIS CONVENTION",
+        ax.text(0.5, 0.75, "AXIS CONVENTION",
                 ha='center', va='top', color='#aaaacc',
                 fontsize=8, fontweight='bold', transform=ax.transAxes)
 
@@ -273,7 +273,7 @@ class DHVisualizer:
             ax.text(x + 0.14, 0.50, lbl, ha='left', va='center',
                     color=col, fontsize=8.5, transform=ax.transAxes)
 
-        ax.text(0.5, 0.08,
+        ax.text(0.5, 0.15,
                 "T_i = Rot_z(θ) · Trans_z(d) · Trans_x(a) · Rot_x(α)",
                 ha='center', va='bottom', color='#888899',
                 fontsize=7.5, style='italic', transform=ax.transAxes,
@@ -312,7 +312,7 @@ class DHVisualizer:
 
         # ── Data rows ─────────────────────────────────────────────────────
         for i in range(n_rows):
-            y = hdr_y - (i + 1.2) * row_h
+            y = hdr_y - (i + 1.8) * row_h
             jcol = JOINT_COLORS[i]
             bg   = "#16162e" if i % 2 == 0 else "#1c1c38"
 
@@ -348,13 +348,13 @@ class DHVisualizer:
         ry   = np.degrees(np.arctan2(-T_ee[2,0], np.sqrt(T_ee[2,1]**2 + T_ee[2,2]**2)))
         rz   = np.degrees(np.arctan2( T_ee[1,0], T_ee[0,0]))
 
-        ax.text(0.5, 0.92, "End-Effector Pose",
+        ax.text(0.5, 0.52, "End-Effector Pose",
                 ha='center', va='top', color='#aaaacc',
                 fontsize=8, fontweight='bold', transform=ax.transAxes)
 
         pstr = (f"X={pos[0]:+7.1f}mm   Y={pos[1]:+7.1f}mm   Z={pos[2]:+7.1f}mm  "
                 f"   Rx={rx:+6.1f}°  Ry={ry:+6.1f}°  Rz={rz:+6.1f}°")
-        ax.text(0.5, 0.28, pstr,
+        ax.text(0.5, 0.08, pstr,
                 ha='center', va='center', color='#f0d060',
                 fontsize=8, fontfamily='monospace', transform=ax.transAxes)
 
