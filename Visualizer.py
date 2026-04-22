@@ -56,10 +56,10 @@ DH_TABLE = np.array([
     #   θ_off     d       a       α        Joint name
     [    0.0,  126.75,    0.0,  -90.0  ],  # 1  Waist
     [    0.0,    0.0,    0.0,    0.0  ],  # 2  Shoulder
-    [    0.0,    0.0,  305.94,    0.0  ],  # 3  Elbow
-    [    0.0,  300.0,    0.0,  -90.0  ],  # 4  Wrist Rotate
-    [    0.0,    0.0,    0.0,   90.0  ],  # 5  Wrist Pitch
-    [    0.0,   0.0,    0.0,  -90.0  ],  # 6  Wrist Roll (to EE)
+    [    0.0,    0.0,  305.94,    90.0  ],  # 3  Elbow
+    [    100.0,  0.0,    0.0,  0.0  ],  # 4  Wrist Rotate
+    [    0.0,    0.0,    0.0,   0.0  ],  # 5  Wrist Pitch
+    [    0.0,   0.0,    0.0,  0.0  ],  # 6  Wrist Roll (to EE)
 ])
 
 JOINT_NAMES  = ["Waist", "Shoulder", "Elbow", "Wrist Rotate", "Wrist Pitch", "Wrist Roll"]
