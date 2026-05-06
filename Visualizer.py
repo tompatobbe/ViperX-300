@@ -42,32 +42,60 @@ from matplotlib.widgets import Slider, Button
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ViperX 300s  ·  Standard DH Parameters
-#  Source: Trossen Robotics ViperX 300 6DOF specifications
-#  Units: millimetres and degrees
+#  DH Parameter Table  —  fill in your own values here
+#  Standard (Classic) DH Convention
+#  Units: degrees for angles, millimetres for lengths
 # ─────────────────────────────────────────────────────────────────────────────
 #
-#  DH_TABLE  columns:  [ θ_offset(°),  d(mm),  a(mm),  α(°) ]
+#  Each row = one joint.  Columns:
 #
-#  θ_offset is a constant added to the joint variable θ to correct
-#  the zero-pose alignment (common in real robots).
+#    α        (°)  — rotation    around the NEW      x-axis (link twist)
+#    a        (mm) — translation along the NEW      x-axis (link length)
+#    d        (mm) — translation along the PREVIOUS z-axis (link offset)
+#    θ_offset (°)  — constant added to the joint variable to align the
+#                    zero-pose with the physical robot.
 #
+#  The transform for joint i is built as:
+#      T_i = Rot_z(θ_i + θ_offset_i) @ Trans_z(d_i) @ Trans_x(a_i) @ Rot_x(α_i)
+#
+#  ┌──────────┬──────────┬───────────┬─────────────┐
+#  │  α  (°)  │  a  (mm) │  d  (mm)  │  θ_off (°)  │
+#  └──────────┴──────────┴───────────┴─────────────┘
+
 DH_TABLE = np.array([
-    #   α(°)     a(mm)    d(mm)   θ_off(°)   Joint name
-    [    0.0,    0.0,   126.75,    0.0   ],  # 1  Waist
-    [  -90.0,    0.0,     0.0,   78.66  ],  # 2  Shoulder
-    [    0.0,  305.94,    0.0,   11.34  ],  # 3  Elbow
-    [  -90.0,    0.0,   300.0,    0.0   ],  # 4  Wrist Rotate
-    [   90.0,    0.0,     0.0,    0.0   ],  # 5  Wrist Pitch
-    [  -90.0,    0.0,     0.0,    0.0   ],  # 6  Wrist Roll (to EE)
+    #   α(°)     a(mm)     d(mm)    θ_off(°)    Joint
+    [  90.0,     0.0,    126.75,     0.0  ],  # 1  Waist
+    [   0.0,   305.94,    0.0,      78.66 ],  # 2  Shoulder
+    [  90.0,   300.0,     0.0,     -90.0  ],  # 3  Elbow
+    [   0.0,     0.0,    50.0,     -90.0  ],  # 4  Wrist Rotate
+    [  90.0,     0.0,     0.0,      90.0  ],  # 5  Wrist Pitch
+    [ -90.0,     0.0,    50.0,     -90.0  ],  # 6  Wrist Roll
 ])
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Reference copy with the original column order [ θ_off, d, a, α ]
+# ─────────────────────────────────────────────────────────────────────────────
+
+DH_TABLE_CLASSIC = np.array([
+    #  θ_off(°)    d(mm)     a(mm)    α(°)      Joint
+    [    0.0,    126.75,     0.0,    90.0  ],  # 1  Waist
+    [   78.66,    0.0,    305.94,    0.0  ],  # 2  Shoulder
+    [  -90.0,     0.0,    300.0,   90.0  ],  # 3  Elbow
+    [  -90.0,    50.0,      0.0,    0.0  ],  # 4  Wrist Rotate
+    [   90.0,     0.0,      0.0,   90.0  ],  # 5  Wrist Pitch
+    [  -90.0,    50.0,      0.0,  -90.0  ],  # 6  Wrist Roll
+])
+
 
 JOINT_NAMES  = ["Waist", "Shoulder", "Elbow", "Wrist Rotate", "Wrist Pitch", "Wrist Roll"]
 JOINT_LIMITS = [(-180, 180), (-106, 101), (-101, 92), (-180, 180), (-101, 101), (-180, 180)]
 N_JOINTS     = 6
 
+# Frames to display: 0=base, 1-6=joints. Change this list to toggle visible frames.
+SHOW_FRAMES  = [0, 1, 2, 3, 4, 5, 6]
+
 # Visual constants
-FRAME_SCALE  = 45    # length of each frame axis arrow (mm)
+FRAME_SCALE  = 10    # length of each frame axis arrow (mm)
 JOINT_COLORS = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#3498db", "#9b59b6"]
 BG_DARK      = "#0d0d1a"
 BG_PANEL     = "#13132b"
@@ -80,39 +108,71 @@ BG_MID       = "#1a1a3e"
 
 def dh_matrix(theta_deg: float, d: float, a: float, alpha_deg: float) -> np.ndarray:
     """
-    Compute one standard DH homogeneous transformation matrix (4×4).
+    Build the standard DH transform for one joint as the product of
+    four elementary matrices:
 
-    T = Rot_z(θ) · Trans_z(d) · Trans_x(a) · Rot_x(α)
+        T = Rot_z(θ) @ Trans_z(d) @ Trans_x(a) @ Rot_x(α)
 
-    Expanded:
-    ┌  cθ  -sθ·cα   sθ·sα   a·cθ ┐
-    │  sθ   cθ·cα  -cθ·sα   a·sθ │
-    │   0     sα      cα      d   │
-    └   0      0       0      1   ┘
+    Each matrix is written out explicitly so you can inspect every step.
     """
     θ  = np.radians(theta_deg)
     α  = np.radians(alpha_deg)
     cθ, sθ = np.cos(θ), np.sin(θ)
     cα, sα = np.cos(α), np.sin(α)
 
-    return np.array([
-        [ cθ, -sθ*cα,  sθ*sα, a*cθ],
-        [ sθ,  cθ*cα, -cθ*sα, a*sθ],
-        [  0,     sα,     cα,    d ],
-        [  0,      0,      0,    1 ],
+    # 1. Rotate around z_{i-1} by θ  (places x_i toward the common normal)
+    Rz = np.array([
+        [ cθ, -sθ,  0,  0],
+        [ sθ,  cθ,  0,  0],
+        [  0,   0,  1,  0],
+        [  0,   0,  0,  1],
     ])
+
+    # 2. Translate along z_{i-1} by d  (move to the height of the common normal)
+    Tz = np.array([
+        [1,  0,  0,  0],
+        [0,  1,  0,  0],
+        [0,  0,  1,  d],
+        [0,  0,  0,  1],
+    ])
+
+    # 3. Translate along x_i by a  (step along the common normal / link length)
+    Tx = np.array([
+        [1,  0,  0,  a],
+        [0,  1,  0,  0],
+        [0,  0,  1,  0],
+        [0,  0,  0,  1],
+    ])
+
+    # 4. Rotate around x_i by α  (align z_{i-1} with z_i / link twist)
+    Rx = np.array([
+        [1,   0,   0,  0],
+        [0,  cα, -sα,  0],
+        [0,  sα,  cα,  0],
+        [0,   0,   0,  1],
+    ])
+
+    return Rz @ Tz @ Tx @ Rx
 
 
 def forward_kinematics(q_deg: np.ndarray, dh: np.ndarray):
     """
-    Return a list of 4×4 transforms [T_base, T_0→1, T_0→2, ..., T_0→6].
-    The first entry is the world/base frame (identity).
+    Return cumulative transforms [T_base, T_0→1, T_0→2, ..., T_0→N].
+
+    For each joint i:
+        theta_i = q_deg[i] + dh[i, 0]          (variable + zero-offset)
+        T_i     = Rot_z(theta_i) @ Trans_z(d_i) @ Trans_x(a_i) @ Rot_x(alpha_i)
+        T_0→i   = T_0→(i-1) @ T_i
     """
-    frames = [np.eye(4)]
+    frames = [np.eye(4)]   # frame {0} = world / base
     T = np.eye(4)
     for i in range(N_JOINTS):
-        θ  = q_deg[i] + dh[i, 0]    # joint angle + offset
-        Ti = dh_matrix(θ, dh[i, 1], dh[i, 2], dh[i, 3])
+        alpha = dh[i, 0]               # col 0 → α
+        a     = dh[i, 1]               # col 1 → a
+        d     = dh[i, 2]               # col 2 → d
+        theta = q_deg[i] + dh[i, 3]   # col 3 → θ_offset + joint variable
+
+        Ti = dh_matrix(theta, d, a, alpha)   # order stays: θ, d, a, α
         T  = T @ Ti
         frames.append(T.copy())
     return frames
@@ -292,7 +352,7 @@ class DHVisualizer:
                 fontsize=9.5, fontweight='bold', transform=ax.transAxes)
 
         # ── Column headers ────────────────────────────────────────────────
-        headers = ["Joint", "θ_offset (°)", "d (mm)", "a (mm)", "α (°)",
+        headers = ["Joint", "α (°)", "a (mm)", "d (mm)", "θ_offset (°)",
                    "θ_joint (°)"]
         col_x   = [0.00, 0.18, 0.34, 0.48, 0.62, 0.78]
         col_w   = [0.18, 0.16, 0.14, 0.14, 0.16, 0.22]
@@ -321,12 +381,12 @@ class DHVisualizer:
                                   transform=ax.transAxes, clip_on=True)
             ax.add_patch(rect)
 
-            theta_total = self.q[i] + self.dh[i, 0]
+            theta_total = self.q[i] + self.dh[i, 3]   # col 3 is θ_offset
             values = [f"{i+1}: {JOINT_NAMES[i]}",
-                      f"{self.dh[i, 0]:+.1f}",
-                      f"{self.dh[i, 1]:.1f}",
-                      f"{self.dh[i, 2]:.1f}",
-                      f"{self.dh[i, 3]:+.1f}",
+                      f"{self.dh[i, 0]:+.1f}",   # α
+                      f"{self.dh[i, 1]:.1f}",    # a
+                      f"{self.dh[i, 2]:.1f}",    # d
+                      f"{self.dh[i, 3]:+.1f}",   # θ_offset
                       f"{theta_total:+.1f}"]
             colors = [jcol, '#dddddd', '#dddddd', '#dddddd', '#dddddd', '#f0d060']
 
@@ -378,7 +438,7 @@ class DHVisualizer:
         ax.set_title("ViperX 300s  ·  DH Frames in 3D Space",
                      color='white', fontsize=11, pad=8)
 
-        R = 450
+        R = 300
         ax.set_xlim(-R, R); ax.set_ylim(-R, R); ax.set_zlim(0, 750)
 
         # ── Ground disk ────────────────────────────────────────────────────
@@ -392,27 +452,29 @@ class DHVisualizer:
         positions = [f[:3, 3] for f in frames]
 
         for i in range(len(positions) - 1):
-            p1, p2 = positions[i], positions[i + 1]
-            jcol   = JOINT_COLORS[min(i, N_JOINTS - 1)]
+            if i in SHOW_FRAMES and (i + 1) in SHOW_FRAMES:
+                p1, p2 = positions[i], positions[i + 1]
+                jcol   = JOINT_COLORS[min(i, N_JOINTS - 1)]
 
-            # Cylinder link
-            draw_cylinder(ax, p1, p2, radius=9, color=jcol, alpha=0.50)
+                # Cylinder link
+                draw_cylinder(ax, p1, p2, radius=9, color=jcol, alpha=0.50)
 
-            # Core line (always visible)
-            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
-                    '-', color=jcol, linewidth=3, alpha=0.9, zorder=4)
+                # Core line (always visible)
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
+                        '-', color=jcol, linewidth=3, alpha=0.9, zorder=4)
 
-            # Joint sphere
-            ax.scatter(*p2, color=jcol, s=80, zorder=6, edgecolors='white',
-                       linewidths=0.6)
+                # Joint sphere
+                ax.scatter(*p2, color=jcol, s=80, zorder=6, edgecolors='white',
+                           linewidths=0.6)
 
         # ── DH frames at each joint ────────────────────────────────────────
         for i, frame in enumerate(frames):
-            label     = "{0}" if i == 0 else f"{{{i}}}"
-            is_ee     = (i == N_JOINTS)
-            fscale    = FRAME_SCALE * 1.5 if is_ee else FRAME_SCALE
-            lw        = 2.8 if is_ee else 2.0
-            draw_frame(ax, frame, scale=fscale, label=label, linewidth=lw)
+            if i in SHOW_FRAMES:
+                label     = "{0}" if i == 0 else f"{{{i}}}"
+                is_ee     = (i == N_JOINTS)
+                fscale    = FRAME_SCALE * 1.5 if is_ee else FRAME_SCALE
+                lw        = 2.8 if is_ee else 2.0
+                draw_frame(ax, frame, scale=fscale, label=label, linewidth=lw)
 
         # ── Annotation: z-axis of joint 1 for context ─────────────────────
         ax.quiver(0, 0, 0, 0, 0, 70, color='#4488ff',
