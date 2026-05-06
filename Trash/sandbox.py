@@ -19,17 +19,47 @@ DH = [
 ]
 
 
+def rot_z(theta):
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([
+        [ c, -s, 0, 0],
+        [ s,  c, 0, 0],
+        [ 0,  0, 1, 0],
+        [ 0,  0, 0, 1],
+    ])
+
+def rot_x(alpha):
+    c, s = np.cos(alpha), np.sin(alpha)
+    return np.array([
+        [1,  0,  0, 0],
+        [0,  c, -s, 0],
+        [0,  s,  c, 0],
+        [0,  0,  0, 1],
+    ])
+
+def trans_z(d):
+    return np.array([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, d],
+        [0, 0, 0, 1],
+    ])
+
+def trans_x(a):
+    return np.array([
+        [1, 0, 0, a],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+    ])
+
+
 def dh_matrix(theta_deg, d, a, alpha_deg):
     t = np.radians(theta_deg)
     al = np.radians(alpha_deg)
-    ct, st = np.cos(t), np.sin(t)
-    ca, sa = np.cos(al), np.sin(al)
-    return np.array([
-        [ct, -st*ca,  st*sa, a*ct],
-        [st,  ct*ca, -ct*sa, a*st],
-        [ 0,     sa,     ca,    d],
-        [ 0,      0,      0,    1],
-    ])
+    return rot_z(t) @ trans_z(d) @ trans_x(a) @ rot_x(al)
+
+
 
 
 # ── Build frames joint by joint ───────────────────────────────────────────────
@@ -63,9 +93,24 @@ def draw_frame(ax, T, scale=30, label=None):
         ax.text(*o, label, fontsize=8)
 
 for i, frame in enumerate(frames):
-    draw_frame(ax, frame, label=str(i))
+    # scale arrows to 20% of the distance to the next frame, capped at 40 mm
+    if i < len(frames) - 1:
+        dist = np.linalg.norm(frames[i+1][:3, 3] - frame[:3, 3])
+        arrow_scale = min(max(dist * 0.2, 8), 40)
+    else:
+        arrow_scale = 20
+    draw_frame(ax, frame, scale=arrow_scale, label=str(i))
 
 ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
 ax.set_title('ViperX-300 — sandbox')
+
+# equal aspect ratio so arrow lengths are consistent across all axes
+all_pts = np.array(positions)
+center = all_pts.mean(axis=0)
+half = np.ptp(all_pts, axis=0).max() / 2 * 1.1
+ax.set_xlim(center[0]-half, center[0]+half)
+ax.set_ylim(center[1]-half, center[1]+half)
+ax.set_zlim(center[2]-half, center[2]+half)
+ax.set_box_aspect([1, 1, 1])
 plt.tight_layout()
 plt.show()
