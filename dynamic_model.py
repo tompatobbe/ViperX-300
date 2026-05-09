@@ -23,9 +23,9 @@ Workflow
 
 Usage
 -----
-  python dynamic_model.py                    # self-test at zero config
-  python dynamic_model.py arm_data.csv       # validate + identify from data
-  python dynamic_model.py arm_data.csv --no-id   # skip identification
+  python3 dynamic_model.py                    # self-test at zero config
+  python3 dynamic_model.py arm_data.csv       # validate + identify from data
+  python3 dynamic_model.py arm_data.csv --no-id   # skip identification
 
 Dependencies
 ------------

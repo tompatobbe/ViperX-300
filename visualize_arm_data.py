@@ -1,150 +1,214 @@
 #!/usr/bin/env python3
 """
-Visualization script for arm_data.csv
+ViperX 300s — Joint Data Viewer
+Interactive viewer for arm_data.csv — position, velocity & acceleration per joint.
 
-Plots position, velocity, and acceleration for all joints over time.
+Usage:
+    python3 visualize_arm_data.py [path/to/arm_data.csv]
+
+Controls:
+    Checkboxes on the right  — toggle individual joints on/off
+    Reset button             — re-enable all joints
 """
-import csv
+
 import sys
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from collections import defaultdict
+from matplotlib.widgets import CheckButtons, Button
+
+# ─── Visual style (matches Visualizer_org.py palette) ────────────────────────
+BG_DARK  = "#0d0d1a"
+BG_PANEL = "#13132b"
+BG_MID   = "#1a1a3e"
+
+JOINTS = [
+    ("waist",        "#e74c3c"),
+    ("shoulder",     "#e67e22"),
+    ("elbow",        "#f1c40f"),
+    ("forearm_roll", "#2ecc71"),
+    ("wrist_angle",  "#3498db"),
+    ("wrist_rotate", "#9b59b6"),
+    ("gripper",      "#1abc9c"),
+    ("left_finger",  "#f0a0ff"),
+    ("right_finger", "#a0ffc8"),
+]
+
+SMOOTH_WIN = 9   # moving-average window for acceleration (samples)
 
 
-def load_csv(filepath):
-    """Load CSV and return time and joint data"""
-    times = []
-    joint_data = defaultdict(lambda: {'pos': [], 'vel': [], 'eff': []})
-    
-    with open(filepath, 'r') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        
-        # Parse header to identify columns
-        time_idx = header.index('time')
-        joint_names = set()
-        
-        for i, col in enumerate(header):
-            if col.endswith('_pos'):
-                joint_name = col[:-4]
-                joint_names.add(joint_name)
-        
-        joint_names = sorted(list(joint_names))
-        
-        # Read data
-        for row in reader:
-            times.append(float(row[time_idx]))
-            for joint in joint_names:
-                try:
-                    pos_idx = header.index(f"{joint}_pos")
-                    joint_data[joint]['pos'].append(float(row[pos_idx]))
-                except (ValueError, IndexError):
-                    pass
-                
-                try:
-                    vel_idx = header.index(f"{joint}_vel")
-                    joint_data[joint]['vel'].append(float(row[vel_idx]))
-                except (ValueError, IndexError):
-                    pass
-                
-                try:
-                    eff_idx = header.index(f"{joint}_eff")
-                    joint_data[joint]['eff'].append(float(row[eff_idx]))
-                except (ValueError, IndexError):
-                    pass
-    
-    # Convert times to relative (seconds from start)
-    if times:
-        times = np.array(times)
-        times = times - times[0]
-    
-    return times, joint_data
+# ─── Data helpers ─────────────────────────────────────────────────────────────
+
+def _smooth(x, w):
+    if w < 3 or len(x) < w:
+        return x
+    return np.convolve(x, np.ones(w) / w, mode="same")
 
 
-def calculate_acceleration(times, velocities):
-    """Calculate acceleration from velocity using numerical differentiation"""
-    accel = np.zeros_like(velocities)
-    dt = np.diff(times)
-    
-    for i in range(1, len(velocities)):
-        if dt[i-1] > 0:
-            accel[i] = (velocities[i] - velocities[i-1]) / dt[i-1]
-    
-    return accel
+def load_data(path):
+    df = pd.read_csv(path)
+    t = df["time"].values
+    t = t - t[0]
+    return t, df
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Visualize arm joint data from CSV')
-    parser.add_argument('filepath', nargs='?', default='arm_data.csv', help='Path to CSV file')
-    parser.add_argument('--save', help='Save plot to file instead of displaying')
-    parser.add_argument('--skip-accel', action='store_true', help='Skip acceleration plots')
-    parser.add_argument('--joints', help='Comma-separated list of joints to plot (default: all)')
-    args = parser.parse_args()
-    
-    print(f"Loading data from {args.filepath}...")
-    times, joint_data = load_csv(args.filepath)
-    
-    if not times.size:
-        print("No data found in CSV file")
+def make_accel(t, vel_arr, smooth_w=SMOOTH_WIN):
+    a = np.gradient(vel_arr, t)
+    return _smooth(a, smooth_w)
+
+
+# ─── Viewer ───────────────────────────────────────────────────────────────────
+
+def run(path="arm_data.csv"):
+    print(f"Loading {path} …")
+    t, df = load_data(path)
+    n_samples = len(t)
+    duration  = t[-1]
+
+    # Keep only joints that are actually present in the CSV
+    available = [(nm, col) for nm, col in JOINTS if f"{nm}_pos" in df.columns]
+    if not available:
+        print("No recognisable joint columns found in CSV.")
         sys.exit(1)
-    
-    joint_names = sorted(list(joint_data.keys()))
-    
-    # Filter joints if specified
-    if args.joints:
-        selected = args.joints.split(',')
-        joint_names = [j for j in joint_names if j in selected]
-    
-    num_joints = len(joint_names)
-    print(f"Found {num_joints} joints: {', '.join(joint_names)}")
-    
-    # Create subplots: 2-3 rows (pos, vel, accel) x num_joints columns
-    num_rows = 2 if args.skip_accel else 3
-    fig, axes = plt.subplots(num_rows, num_joints, figsize=(3.5*num_joints, 2.5*num_rows))
-    fig.suptitle('Arm Joint Data: Position, Velocity, and Acceleration', fontsize=12)
-    
-    # Handle single joint case (axes is 1D)
-    if num_joints == 1:
-        axes = axes.reshape(num_rows, 1)
-    
-    row_idx = 0
-    for col, joint in enumerate(joint_names):
-        pos = np.array(joint_data[joint]['pos'])
-        vel = np.array(joint_data[joint]['vel'])
-        
-        # Position plot
-        axes[0, col].plot(times, pos, 'b-', linewidth=1.5)
-        axes[0, col].set_title(f'{joint} - Position', fontsize=10)
-        axes[0, col].set_ylabel('Position (rad)', fontsize=9)
-        axes[0, col].grid(True, alpha=0.3)
-        
-        # Velocity plot
-        axes[1, col].plot(times, vel, 'g-', linewidth=1.5)
-        axes[1, col].set_title(f'{joint} - Velocity', fontsize=10)
-        axes[1, col].set_ylabel('Velocity (rad/s)', fontsize=9)
-        axes[1, col].grid(True, alpha=0.3)
-        
-        # Acceleration plot
-        if not args.skip_accel:
-            accel = calculate_acceleration(times, vel)
-            axes[2, col].plot(times, accel, 'r-', linewidth=1.5)
-            axes[2, col].set_title(f'{joint} - Acceleration', fontsize=10)
-            axes[2, col].set_ylabel('Acceleration (rad/s²)', fontsize=9)
-            axes[2, col].set_xlabel('Time (s)', fontsize=9)
-            axes[2, col].grid(True, alpha=0.3)
-        else:
-            axes[1, col].set_xlabel('Time (s)', fontsize=9)
-    
-    plt.tight_layout()
-    
-    if args.save:
-        print(f"Saving plot to {args.save}...")
-        plt.savefig(args.save, dpi=100, bbox_inches='tight')
-        print(f"Saved to {args.save}")
-    else:
-        plt.show()
 
+    names  = [j[0] for j in available]
+    colors = [j[1] for j in available]
+    n      = len(names)
+
+    pos   = [df[f"{nm}_pos"].values for nm in names]
+    vel   = [df[f"{nm}_vel"].values for nm in names]
+    accel = [make_accel(t, df[f"{nm}_vel"].values) for nm in names]
+
+    # ── Figure & axes ─────────────────────────────────────────────────────────
+    plt.style.use("dark_background")
+    fig = plt.figure(figsize=(17, 10), facecolor=BG_DARK)
+    fig.canvas.manager.set_window_title("ViperX 300s  ·  Joint Data Viewer")
+
+    LX, LW = 0.06, 0.74          # left plots: x-start, width
+    RX, RW = 0.82, 0.17          # right panel: x-start, width
+    ROW_H  = 0.255
+    ROWS_Y = [0.695, 0.405, 0.115]  # y-start for pos / vel / accel rows
+
+    ax_pos  = fig.add_axes([LX, ROWS_Y[0], LW, ROW_H], facecolor=BG_MID)
+    ax_vel  = fig.add_axes([LX, ROWS_Y[1], LW, ROW_H], facecolor=BG_MID)
+    ax_acc  = fig.add_axes([LX, ROWS_Y[2], LW, ROW_H], facecolor=BG_MID)
+    ax_chk  = fig.add_axes([RX, 0.13,      RW, 0.80],  facecolor=BG_PANEL)
+
+    all_axes   = [ax_pos, ax_vel, ax_acc]
+    all_data   = [pos,    vel,    accel]
+    ylabels    = ["Position  (rad)", "Velocity  (rad/s)", "Acceleration  (rad/s²)"]
+    row_titles = ["Position", "Velocity", "Acceleration"]
+
+    # ── Plot lines ────────────────────────────────────────────────────────────
+    lines_by_row = []
+    for ax, d_list, title, ylabel in zip(all_axes, all_data, row_titles, ylabels):
+        row = []
+        for nm, col, d in zip(names, colors, d_list):
+            ln, = ax.plot(t, d, color=col, linewidth=1.5, label=nm, alpha=0.92)
+            row.append(ln)
+        lines_by_row.append(row)
+
+        ax.set_title(title, color="white", fontsize=10, pad=5, loc="left",
+                     fontweight="bold")
+        ax.set_ylabel(ylabel, color="#aaaacc", fontsize=9)
+        ax.grid(True, linestyle=":", alpha=0.28, color="#334466")
+        ax.tick_params(colors="#7777aa", labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#2a2a55")
+
+    # Share x-axis ticks; only bottom row gets x-label
+    ax_pos.set_xticklabels([])
+    ax_vel.set_xticklabels([])
+    ax_acc.set_xlabel("Time  (s)", color="#aaaacc", fontsize=9)
+
+    # Legend inside position plot
+    legend = ax_pos.legend(
+        ncol=min(n, 5), loc="upper right",
+        fontsize=8, framealpha=0.35,
+        facecolor=BG_PANEL, edgecolor="#333366",
+    )
+    handles = getattr(legend, "legend_handles", None) or legend.legendHandles
+    for lh, col in zip(handles, colors):
+        lh.set_color(col)
+
+    # ── Header text ───────────────────────────────────────────────────────────
+    fig.text(0.5, 0.975,
+             "ViperX 300s  ·  Joint Data Viewer",
+             ha="center", va="top", color="white",
+             fontsize=13, fontweight="bold")
+    fig.text(0.5, 0.952,
+             f"File: {path}   |   {n_samples} samples   |   "
+             f"Duration: {duration:.2f} s",
+             ha="center", va="top", color="#888899", fontsize=8.5)
+
+    # ── CheckButtons (joint toggles) ──────────────────────────────────────────
+    ax_chk.set_facecolor(BG_PANEL)
+    for sp in ax_chk.spines.values():
+        sp.set_edgecolor("#2a2a55")
+
+    fig.text(RX + RW / 2, 0.945, "Joints",
+             ha="center", va="top", color="#ccccee",
+             fontsize=9.5, fontweight="bold")
+
+    active = [True] * n
+    chk = CheckButtons(ax_chk, names, active)
+
+    # Style checkboxes
+    for rect in chk.rectangles:
+        rect.set_facecolor(BG_MID)
+        rect.set_edgecolor("#555588")
+        rect.set_linewidth(1.2)
+    for lbl, col in zip(chk.labels, colors):
+        lbl.set_color(col)
+        lbl.set_fontsize(9.5)
+
+    def _rebuild_legend():
+        visible_lines  = [ln for ln in lines_by_row[0] if ln.get_visible()]
+        visible_labels = [ln.get_label() for ln in visible_lines]
+        legend = ax_pos.legend(
+            visible_lines, visible_labels,
+            ncol=min(len(visible_lines), 5), loc="upper right",
+            fontsize=8, framealpha=0.35,
+            facecolor=BG_PANEL, edgecolor="#333366",
+        )
+        handles = getattr(legend, "legend_handles", None) or legend.legendHandles
+        for lh, ln in zip(handles, visible_lines):
+            lh.set_color(ln.get_color())
+
+    def on_toggle(label):
+        idx = names.index(label)
+        vis = not lines_by_row[0][idx].get_visible()
+        for row in lines_by_row:
+            row[idx].set_visible(vis)
+        _rebuild_legend()
+        fig.canvas.draw_idle()
+
+    chk.on_clicked(on_toggle)
+
+    # ── Reset button ──────────────────────────────────────────────────────────
+    ax_btn = fig.add_axes([RX + 0.02, 0.055, RW - 0.04, 0.042])
+    btn = Button(ax_btn, "Show All", color="#2c2c54", hovercolor="#3d3d7a")
+    btn.label.set_color("white")
+    btn.label.set_fontsize(9)
+
+    def on_reset(_):
+        for i in range(n):
+            for row in lines_by_row:
+                row[i].set_visible(True)
+        # Sync checkbox state
+        for i, status in enumerate(chk.get_status()):
+            if not status:
+                chk.set_active(i)
+        _rebuild_legend()
+        fig.canvas.draw_idle()
+
+    btn.on_clicked(on_reset)
+
+    plt.show()
+
+
+# ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    path = sys.argv[1] if len(sys.argv) > 1 else "arm_data.csv"
+    run(path)
