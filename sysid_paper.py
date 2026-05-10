@@ -40,8 +40,8 @@ import warnings
 from typing import Tuple, List, Optional
 
 # =============================================================================
-# 1. Modified DH kinematics (paper Table 1)
-#    Convention: T_{i-1,i} = Rx(α_{i-1}) · Tx(a_{i-1}) · Rz(θ_i) · Tz(d_i)
+# 1. Standard (Craig) DH kinematics
+#    Convention: T_{i-1,i} = Rz(θ_i) · Tz(d_i) · Tx(a_i) · Rx(α_i)
 # =============================================================================
 
 # DH parameters: [alpha_prev, a_prev, d_i, theta_offset_i]
@@ -69,15 +69,15 @@ N_PARAMS   = 13   # per link
 N_PARAMS_T = N_JOINTS * N_PARAMS   # 78 total
 
 
-def _mdh_transform(alpha_prev: float, a_prev: float, d_i: float, theta_i: float) -> np.ndarray:
-    """Modified DH homogeneous transform T_{i-1,i}."""
-    ct, st = np.cos(theta_i), np.sin(theta_i)
-    ca, sa = np.cos(alpha_prev), np.sin(alpha_prev)
+def _dh_transform(alpha: float, a: float, d: float, theta: float) -> np.ndarray:
+    """Standard (Craig) DH transform T_{i-1,i} = Rz(θ)·Tz(d)·Tx(a)·Rx(α)."""
+    ct, st = np.cos(theta), np.sin(theta)
+    ca, sa = np.cos(alpha), np.sin(alpha)
     return np.array([
-        [ct,       -st,       0,      a_prev ],
-        [st*ca,     ct*ca,   -sa,    -sa*d_i ],
-        [st*sa,     ct*sa,    ca,     ca*d_i ],
-        [0,         0,        0,      1      ],
+        [ct, -st*ca,  st*sa, a*ct],
+        [st,  ct*ca, -ct*sa, a*st],
+        [ 0,     sa,     ca,    d],
+        [ 0,      0,      0,    1],
     ])
 
 
@@ -89,7 +89,7 @@ def forward_kinematics(q: np.ndarray) -> List[np.ndarray]:
     T = [np.eye(4)]
     for i in range(N_JOINTS):
         alpha, a, d, theta_off = DH_PARAMS[i]
-        Ti = _mdh_transform(alpha, a, d, q[i] + theta_off)
+        Ti = _dh_transform(alpha, a, d, q[i] + theta_off)
         T.append(T[-1] @ Ti)
     return T
 

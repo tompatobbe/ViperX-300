@@ -72,19 +72,6 @@ DH_TABLE = np.array([
     [ -90.0,     0.0,    50.0,     -90.0  ],  # 6  Wrist Roll
 ])
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Reference copy with the original column order [ θ_off, d, a, α ]
-# ─────────────────────────────────────────────────────────────────────────────
-
-DH_TABLE_CLASSIC = np.array([
-    #  θ_off(°)    d(mm)     a(mm)    α(°)      Joint
-    [    0.0,    126.75,     0.0,    90.0  ],  # 1  Waist
-    [   78.66,    0.0,    305.94,    0.0  ],  # 2  Shoulder
-    [  -90.0,     0.0,    300.0,   90.0  ],  # 3  Elbow
-    [  -90.0,    50.0,      0.0,    0.0  ],  # 4  Wrist Rotate
-    [   90.0,     0.0,      0.0,   90.0  ],  # 5  Wrist Pitch
-    [  -90.0,    50.0,      0.0,  -90.0  ],  # 6  Wrist Roll
-])
 
 
 JOINT_NAMES  = ["Waist", "Shoulder", "Elbow", "Wrist Rotate", "Wrist Pitch", "Wrist Roll"]
