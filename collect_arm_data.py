@@ -90,8 +90,6 @@ def sample_loop(bot: InterbotixManipulatorXS, duration: float, rate: float,
         header += [f"{n}_pos", f"{n}_vel", f"{n}_effort"]
 
     interval = 1.0 / float(rate) if rate > 0 else 0.02
-    # moving_time must be long enough for the Dynamixel controller to actually execute the move.
-    # Below ~0.2 s the goal is overwritten before any motion occurs.
     moving_time = max(interval * 2.0, 0.20)
     end_time = time.time() + float(duration) if duration > 0 else float('inf')
 
@@ -107,6 +105,22 @@ def sample_loop(bot: InterbotixManipulatorXS, duration: float, rate: float,
                 if loop_start >= end_time:
                     break
 
+                # Read state at the TOP of the loop — the sleep at the end of the
+                # previous iteration gave the ROS joint-state publisher time to push
+                # a fresh message, so this read reflects the arm's actual current pose.
+                js = bot.core.robot_get_joint_states()
+                row = [loop_start]
+                for n in names:
+                    try:
+                        idx = js.name.index(n)
+                    except ValueError:
+                        idx = None
+                    pos = js.position[idx] if idx is not None and idx < len(js.position) else ""
+                    vel = js.velocity[idx] if idx is not None and idx < len(js.velocity) else ""
+                    eff = js.effort[idx] if idx is not None and idx < len(js.effort) else ""
+                    row += [pos, vel, eff]
+                writer.writerow(row)
+
                 # Ground-clearance check: fall back to last safe position if too low
                 q_cmd = trajectory(loop_start - t0)
                 if _ee_z(q_cmd) >= min_ee_height:
@@ -121,20 +135,6 @@ def sample_loop(bot: InterbotixManipulatorXS, duration: float, rate: float,
                     accel_time=moving_time / 4.0,
                     blocking=True,
                 )
-
-                # Record actual joint states
-                js = bot.core.robot_get_joint_states()
-                row = [loop_start]
-                for n in names:
-                    try:
-                        idx = js.name.index(n)
-                    except ValueError:
-                        idx = None
-                    pos = js.position[idx] if idx is not None and idx < len(js.position) else ""
-                    vel = js.velocity[idx] if idx is not None and idx < len(js.velocity) else ""
-                    eff = js.effort[idx] if idx is not None and idx < len(js.effort) else ""
-                    row += [pos, vel, eff]
-                writer.writerow(row)
 
                 elapsed = time.time() - loop_start
                 remaining = interval - elapsed
