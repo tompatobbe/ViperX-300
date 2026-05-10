@@ -2,6 +2,9 @@
 """
 Visualization script for arm_data.csv
 
+Usage:
+    python3 visualize_arm_data.py arm_data.csv
+
 Plots position, velocity, and acceleration for all joints over time.
 """
 import csv
@@ -113,6 +116,7 @@ def main():
         pos = np.array(joint_data[joint]['pos'])
         vel = np.array(joint_data[joint]['vel'])
         
+    
         # Position plot
         axes[0, col].plot(times, pos, 'b-', linewidth=1.5)
         axes[0, col].set_title(f'{joint} - Position', fontsize=10)
