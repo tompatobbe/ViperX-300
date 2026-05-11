@@ -5,7 +5,7 @@ Collect joint state data while executing a sum-of-sinusoids excitation trajector
 Columns: time (s since epoch), <joint>_pos, <joint>_vel, <joint>_effort for each joint.
 
 Usage example:
-  python3 collect_arm_data.py --duration 60 --rate 50 --output arm_data.csv
+  python3 collect_arm_data.py --duration 60 --rate 50 --output data/arm_data.csv
 """
 import time
 import csv
@@ -155,8 +155,8 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=60.0,
                         help="record duration in seconds (default: 60)")
     parser.add_argument("--rate", type=float, default=50.0, help="sample rate Hz (default: 50)")
-    parser.add_argument("--output", default="arm_data.csv",
-                        help="output CSV path (default: arm_data.csv)")
+    parser.add_argument("--output", default="data/arm_data.csv",
+                        help="output CSV path (default: data/arm_data.csv)")
     parser.add_argument("--min-ee-height", type=float, default=0.30,
                         help="minimum end-effector z height in metres (default: 0.30)")
     args = parser.parse_args()

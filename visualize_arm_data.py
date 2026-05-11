@@ -59,7 +59,7 @@ def make_accel(t, vel_arr, smooth_w=SMOOTH_WIN):
 
 # ─── Viewer ───────────────────────────────────────────────────────────────────
 
-def run(path="arm_data.csv"):
+def run(path="data/arm_data.csv"):
     print(f"Loading {path} …")
     t, df = load_data(path)
     n_samples = len(t)
@@ -154,7 +154,7 @@ def run(path="arm_data.csv"):
     chk = CheckButtons(ax_chk, names, active)
 
     # Style checkboxes
-    for rect in chk.rectangles:
+    for rect in getattr(chk, 'rectangles', getattr(chk, '_boxes', [])):
         rect.set_facecolor(BG_MID)
         rect.set_edgecolor("#555588")
         rect.set_linewidth(1.2)
@@ -210,5 +210,5 @@ def run(path="arm_data.csv"):
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "arm_data.csv"
+    path = sys.argv[1] if len(sys.argv) > 1 else "data/arm_data.csv"
     run(path)

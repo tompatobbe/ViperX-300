@@ -5,7 +5,7 @@ Collect torque, velocity, and acceleration from all joints of an Interbotix arm.
 Columns: time (s since epoch), <joint>_vel, <joint>_torque, <joint>_accel for each joint.
 
 Usage example:
-  python3 collect_joint_torque_vel_accel.py --duration 30 --rate 50 --output joint_data.csv
+  python3 collect_joint_torque_vel_accel.py --duration 30 --rate 50 --output data/joint_data.csv
 """
 import time
 import csv
@@ -80,7 +80,7 @@ def main() -> None:
     parser.add_argument("--gripper", default="gripper", help="gripper name (default: gripper)")
     parser.add_argument("--duration", type=float, default=10.0, help="record duration in seconds (default: 10)")
     parser.add_argument("--rate", type=float, default=50.0, help="sample rate Hz (default: 50)")
-    parser.add_argument("--output", default="joint_data.csv", help="output CSV path (default: joint_data.csv)")
+    parser.add_argument("--output", default="data/joint_data.csv", help="output CSV path (default: data/joint_data.csv)")
     args = parser.parse_args()
 
     bot = InterbotixManipulatorXS(robot_model=args.robot_model, group_name=args.group, gripper_name=args.gripper)

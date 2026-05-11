@@ -706,8 +706,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description="ViperX-300 system identification following the paper method")
-    parser.add_argument("csv", nargs="?", default="arm_data.csv",
-                        help="CSV file from collect_arm_data.py (default: arm_data.csv)")
+    parser.add_argument("csv", nargs="?", default="data/arm_data.csv",
+                        help="CSV file from collect_arm_data.py (default: data/arm_data.csv)")
     parser.add_argument("--fs",    type=float, default=50.0,
                         help="Sampling rate Hz (default: 50)")
     parser.add_argument("--fc",    type=float, default=10.0,

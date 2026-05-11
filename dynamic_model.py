@@ -24,8 +24,8 @@ Workflow
 Usage
 -----
   python3 dynamic_model.py                    # self-test at zero config
-  python3 dynamic_model.py arm_data.csv       # validate + identify from data
-  python3 dynamic_model.py arm_data.csv --no-id   # skip identification
+  python3 dynamic_model.py data/arm_data.csv       # validate + identify from data
+  python3 dynamic_model.py data/arm_data.csv --no-id   # skip identification
 
 Dependencies
 ------------
@@ -493,7 +493,7 @@ def validate(csv_path, run_identification=True):
 
     axes[-1].set_xlabel("Time [s]")
     plt.tight_layout()
-    out = csv_path.rsplit(".", 1)[0] + "_validation.png"
+    out = "plots/" + csv_path.rsplit("/", 1)[-1].rsplit(".", 1)[0] + "_validation.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"\nPlot saved to {out}")
     plt.show()
