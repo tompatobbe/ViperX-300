@@ -250,7 +250,7 @@ def find_base_parameters(W_stacked: np.ndarray,
         L_matrix  : (78, p) matrix such that W_stacked ≈ W_base @ L.T
                     i.e. φ_full = L @ φ_base (regrouping matrix)
     """
-    Q, R, P = la.qr(W_stacked, pivoting=True)   # W[:, P] = Q @ R
+    Q, R, P = la.qr(W_stacked, pivoting=True, mode='economic')   # W[:, P] = Q @ R
     rank = np.sum(np.abs(np.diag(R)) > tol * np.abs(R[0, 0]))
     base_cols = np.sort(P[:rank])
 
@@ -297,6 +297,13 @@ def load_and_filter(csv_path: str,
 
     # Convert effort to Nm
     tau_raw = eff_raw * EFFORT_SCALE[np.newaxis, :]
+
+    # Auto-detect actual sample rate from timestamps; warn if it differs from --fs
+    fs_actual = 1.0 / float(np.median(np.diff(t)))
+    if abs(fs_actual - fs) > 2.0:
+        print(f"    [warn] --fs={fs:.1f} Hz but CSV contains {fs_actual:.1f} Hz data "
+              f"— using detected rate for filter design")
+    fs = fs_actual
 
     # Design zero-phase Butterworth filter (4th order → effectively 8th after filtfilt)
     nyq    = fs / 2.0
@@ -706,7 +713,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description="ViperX-300 system identification following the paper method")
-    parser.add_argument("csv", nargs="?", default="data/arm_data.csv",
+    parser.add_argument("csv", nargs="?", default="data/sysid_run1.csv",
                         help="CSV file from collect_arm_data.py (default: data/arm_data.csv)")
     parser.add_argument("--fs",    type=float, default=50.0,
                         help="Sampling rate Hz (default: 50)")
