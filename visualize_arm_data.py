@@ -12,6 +12,8 @@ Controls:
 """
 
 import sys
+import os
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -203,6 +205,23 @@ def run(path="data/arm_data.csv"):
         fig.canvas.draw_idle()
 
     btn.on_clicked(on_reset)
+
+    # ── Save button ───────────────────────────────────────────────────────────
+    ax_save_btn = fig.add_axes([RX + 0.02, 0.002, RW - 0.04, 0.042])
+    save_btn = Button(ax_save_btn, "Save Figure", color="#2c5f2c", hovercolor="#3d8f3d")
+    save_btn.label.set_color("white")
+    save_btn.label.set_fontsize(9)
+
+    def on_save(_):
+        # Ensure figures folder exists
+        os.makedirs("figures", exist_ok=True)
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"figures/arm_data_{timestamp}.png"
+        fig.savefig(filename, facecolor=BG_DARK, dpi=150, bbox_inches="tight")
+        print(f"Figure saved to {filename}")
+
+    save_btn.on_clicked(on_save)
 
     plt.show()
 

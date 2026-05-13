@@ -289,7 +289,7 @@ class InterbotixCurrentControl(Node):
             self.acc_P_gain * err_acc
         )
 
-        g = pin.computeGeneralizedGravity(self.model, self.data, self.pos[:6])
+        #g = pin.computeGeneralizedGravity(self.model, self.data, self.pos[:6])
         # current_cmd = current_cmd
 
         # DATA SHEET:
@@ -375,7 +375,7 @@ def main(args=None):
             node.destroy_node()
             rclpy.shutdown()
         logged_data = np.vstack(node.logged_data)
-        np.save("/home/berwul/interbotix_ws/src/fnl_cnl/helpers/logged_data.npy", logged_data)
+        np.save("/home/tobbe/ViperX-300/data.npy", logged_data)
 
 
 if __name__ == '__main__':
