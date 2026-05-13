@@ -18,6 +18,8 @@ import scipy.linalg as la
 import scipy.signal as sig
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
+import datetime
+import os
 import pandas as pd
 from typing import Tuple, List, Optional
 
@@ -398,5 +400,8 @@ if __name__ == "__main__":
 
     phi = run_identification(args.csv, fs=args.fs, fc_lpf=args.fc,
                              stride=args.stride, plot=not args.no_plot)
-    np.save("phi_subsample.npy", phi)
-    print("\nSaved to phi_subsample.npy")
+    os.makedirs("npy", exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = f"npy/phi_subsample_{ts}.npy"
+    np.save(out_path, phi)
+    print(f"\nSaved to {out_path}")

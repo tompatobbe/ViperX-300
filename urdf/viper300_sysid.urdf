@@ -1,0 +1,111 @@
+<?xml version="1.0" ?>
+<robot name="viper300_sysid">
+  <link name="base_link">
+    <inertial>
+      <mass value="0.0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="waist" type="revolute">
+    <origin xyz="0.00000000 0.00000000 0.12675000" rpy="0.00000000 -0.00000000 0.00000000" />
+    <parent link="base_link" />
+    <child link="waist_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141590" upper="3.141590" effort="4.100" velocity="3.141590" />
+    <dynamics damping="0.12600000" friction="0.00000002" />
+  </joint>
+  <link name="waist_link">
+    <inertial>
+      <origin xyz="0.00000000 0.00000000 0.00000000" rpy="0 0 0" />
+      <mass value="0.80000000" />
+      <inertia ixx="0.0080000000" ixy="0.0000000000" ixz="0.0000000000" iyy="0.0080000000" iyz="0.0000000000" izz="0.0080000000" />
+    </inertial>
+    <!-- Identified torque offset F0[1] = -0.110290 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="shoulder" type="revolute">
+    <origin xyz="0.00000000 -0.00000000 0.00000000" rpy="-1.57079633 -0.00000000 -1.37287599" />
+    <parent link="waist_link" />
+    <child link="upper_arm_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.876300" upper="1.989700" effort="10.600" velocity="2.610500" />
+    <dynamics damping="0.10100000" friction="0.00030972" />
+  </joint>
+  <link name="upper_arm_link">
+    <inertial>
+      <origin xyz="0.76137591 0.08401842 0.00357335" rpy="0 0 0" />
+      <mass value="2.51968894" />
+      <inertia ixx="0.0000014015" ixy="-0.0000000014" ixz="0.0000000170" iyy="0.0000017838" iyz="0.0000000208" izz="0.0000017834" />
+    </inertial>
+    <!-- Identified torque offset F0[2] = 0.458554 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="elbow" type="revolute">
+    <origin xyz="0.29996732 -0.06015719 0.00000000" rpy="0.00000000 -0.00000000 -0.19792034" />
+    <parent link="upper_arm_link" />
+    <child link="forearm_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.152100" upper="1.570800" effort="10.600" velocity="2.610500" />
+    <dynamics damping="0.04030000" friction="0.26100000" />
+  </joint>
+  <link name="forearm_link">
+    <inertial>
+      <origin xyz="-0.27726509 0.76819050 -0.00101200" rpy="0 0 0" />
+      <mass value="3.17137901" />
+      <inertia ixx="0.0000023869" ixy="0.0000001535" ixz="-0.0000000507" iyy="0.0000019310" iyz="-0.0000000396" izz="0.0000024184" />
+    </inertial>
+    <!-- Identified torque offset F0[3] = -1.706839 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="forearm_roll" type="revolute">
+    <origin xyz="0.00000000 0.00000000 0.30002000" rpy="-1.57079633 -0.00000000 0.00000000" />
+    <parent link="forearm_link" />
+    <child link="wrist_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141590" upper="3.141590" effort="4.100" velocity="3.141590" />
+    <dynamics damping="0.02340000" friction="0.00000022" />
+  </joint>
+  <link name="wrist_link">
+    <inertial>
+      <origin xyz="0.00093072 -0.52244569 0.00378098" rpy="0 0 0" />
+      <mass value="0.34975425" />
+      <inertia ixx="0.0000022372" ixy="-0.0000000969" ixz="-0.0000000309" iyy="0.0000020066" iyz="-0.0000000365" izz="0.0000021582" />
+    </inertial>
+    <!-- Identified torque offset F0[4] = 0.051680 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="wrist_angle" type="revolute">
+    <origin xyz="0.00000000 0.00000000 0.00000000" rpy="1.57079633 -0.00000000 0.00000000" />
+    <parent link="wrist_link" />
+    <child link="gripper_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.745300" upper="2.146800" effort="4.100" velocity="3.141590" />
+    <dynamics damping="0.01660000" friction="0.06080000" />
+  </joint>
+  <link name="gripper_link">
+    <inertial>
+      <origin xyz="0.32398438 0.55132381 0.00230456" rpy="0 0 0" />
+      <mass value="0.28945623" />
+      <inertia ixx="0.0000022943" ixy="-0.0000002494" ixz="-0.0000001433" iyy="0.0000020461" iyz="-0.0000002150" izz="0.0000021521" />
+    </inertial>
+    <!-- Identified torque offset F0[5] = -0.059835 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="wrist_rotate" type="revolute">
+    <origin xyz="0.00000000 0.00000000 0.00000000" rpy="-1.57079633 -0.00000000 0.00000000" />
+    <parent link="gripper_link" />
+    <child link="ee_arm" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.141590" upper="3.141590" effort="4.100" velocity="3.141590" />
+    <dynamics damping="0.00158000" friction="0.00295000" />
+  </joint>
+  <link name="ee_arm">
+    <inertial>
+      <origin xyz="-0.00042510 0.12115850 0.00003447" rpy="0 0 0" />
+      <mass value="0.10002196" />
+      <inertia ixx="0.0001715197" ixy="0.0000062836" ixz="-0.0000718356" iyy="0.0004046376" iyz="0.0000003717" izz="0.0002400016" />
+    </inertial>
+    <!-- Identified torque offset F0[6] = -0.006140 Nm (feed-forward term, add manually to your controller) -->
+  </link>
+  <joint name="ee_arm" type="fixed">
+    <origin xyz="0.13658000 0.0 0.0" rpy="0 0 0" />
+    <parent link="ee_arm" />
+    <child link="ee_link" />
+  </joint>
+  <link name="ee_link" />
+</robot>
