@@ -8,13 +8,15 @@ and monitors joint positions in real time to scale back current near limits.
 Run AFTER record_joint_states.py is running.
 
 Usage:
-    python3 run_sysid_cur.py --duration 60 --rate 50
+python3 run_sysid_cur.py --duration 60 --rate 50
 """
 import argparse
+import os
 import threading
 import time
 
 import numpy as np
+import pinocchio as pin
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -22,6 +24,14 @@ from sensor_msgs.msg import JointState
 from interbotix_xs_msgs.msg import JointGroupCommand
 from interbotix_xs_modules.xs_robot.arm import InterbotixManipulatorXS
 
+
+URDF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'urdf', 'vx300s.urdf')
+
+# Per-joint motor torque constants (Nm/A)
+# waist, elbow        : XM540-W270 (single)  kt = 2.409
+# shoulder            : XM540-W270 × 2 (shadow pair) kt = 4.818
+# forearm/wrist × 3   : XM430-W350            kt = 1.81
+KT = np.array([2.409, 4.818, 2.409, 1.81, 1.81, 1.81])
 
 # ── Joint ordering (matches interbotix arm group) ─────────────────────────────
 JOINT_NAMES = [
@@ -40,11 +50,17 @@ _SOFT_BUFFER = 0.20   # rad
 SOFT_LO = LIMITS_LO + _SOFT_BUFFER
 SOFT_HI = LIMITS_HI - _SOFT_BUFFER
 
-# Per-joint current amplitudes (mA) for excitation — conservative for first run
+# Per-joint excitation amplitudes (mA) — the sinusoid peak before gravity is added
 CURRENT_AMPLITUDES = np.array([150.0, 250.0, 200.0, 120.0, 120.0,  80.0])
 
-# Absolute current cap per joint (mA) — never exceeded regardless of amplitude
-MAX_CURRENT_MA = np.array([300.0, 400.0, 350.0, 250.0, 250.0, 150.0])
+# Excitation clip (mA) — pre-clipped in build_trajectory before gravity is added
+MAX_EXC_MA = np.array([300.0, 400.0, 350.0, 250.0, 250.0, 150.0])
+
+# Motor safety cap on the total command (excitation + gravity, mA).
+# Gravity alone can reach ~1300 mA on the elbow at horizontal positions.
+# These are set to ~37 % of motor stall current: XM540 stall ≈ 4100 mA,
+# XM430 stall ≈ 2270 mA; shoulder uses two XM540s sharing the load.
+MAX_TOTAL_MA = np.array([600.0, 1500.0, 1500.0, 400.0, 500.0, 300.0])
 
 # Sinusoid component angular frequencies (rad/s)
 FREQS = np.array([0.30, 0.60, 1.00, 1.60, 2.50, 3.80])
@@ -53,7 +69,26 @@ FREQS = np.array([0.30, 0.60, 1.00, 1.60, 2.50, 3.80])
 _Z_SHOULDER = 0.127
 _L_UPPER    = 0.200
 _L_FORE     = 0.265
-_L_HAND     = 0.170
+_L_HAND     = 0.207
+
+
+def build_gravity_model() -> tuple:
+    model = pin.buildModelFromUrdf(URDF_PATH)
+    data  = model.createData()
+    return model, data
+
+
+def gravity_mA(model, data, pos: np.ndarray) -> np.ndarray:
+    """Gravity compensation current (mA) at the given joint positions.
+
+    Uses Pinocchio to compute exact gravity torques, then converts to mA
+    via per-joint torque constants. Called from the main thread only —
+    Pinocchio data objects are not thread-safe.
+    """
+    q = pin.neutral(model)  # handles gripper's 2-element continuous parameterisation
+    q[:6] = pos
+    g = pin.computeGeneralizedGravity(model, data, q)
+    return g[:6] / KT * 1000.0   # Nm → mA
 
 
 def ee_z_estimate(q: np.ndarray) -> float:
@@ -128,23 +163,35 @@ def build_trajectory(
         for j in range(len(JOINT_NAMES)):
             for k, w in enumerate(FREQS):
                 cur[j] += (CURRENT_AMPLITUDES[j] / len(FREQS)) * np.sin(w * t + phases[j, k])
-        cur = np.clip(cur, -MAX_CURRENT_MA, MAX_CURRENT_MA)
+        cur = np.clip(cur, -MAX_EXC_MA, MAX_EXC_MA)
         waypoints.append((t, cur))
     return waypoints
 
 
-def safety_scale(cur: np.ndarray, pos: np.ndarray, min_ee_height: float) -> np.ndarray:
+def compute_current(
+    exc: np.ndarray,
+    g: np.ndarray,
+    pos: np.ndarray,
+    min_ee_height: float,
+) -> np.ndarray:
+    """Combine excitation and gravity compensation into a safe current command.
+
+    Emergency cases (hard limit or EE too low): zero everything — the servo
+    switches back to position mode in the finally block so the arm is held.
+
+    Soft-limit zone: scale only the excitation down toward zero; gravity
+    compensation always passes through so the arm does not drift under gravity
+    even when excitation is suppressed near a limit.
+
+    Returns clipped total current (mA).
     """
-    Per-joint linear ramp-down near soft limits; full zero if hard limit or EE too low.
-    Returns scaled current array.
-    """
-    # Hard limit or EE too low → emergency zero
+    # Emergency: hard limit or EE too low → zero everything
     if np.any(pos <= LIMITS_LO) or np.any(pos >= LIMITS_HI):
         return np.zeros(len(JOINT_NAMES))
     if ee_z_estimate(pos) < min_ee_height:
         return np.zeros(len(JOINT_NAMES))
 
-    # Soft limit: per-joint linear scale in [0, 1]
+    # Soft limit: per-joint linear scale on excitation only
     scale = np.ones(len(JOINT_NAMES))
     for j in range(len(JOINT_NAMES)):
         if pos[j] < SOFT_LO[j]:
@@ -152,7 +199,8 @@ def safety_scale(cur: np.ndarray, pos: np.ndarray, min_ee_height: float) -> np.n
         elif pos[j] > SOFT_HI[j]:
             scale[j] = max(0.0, (LIMITS_HI[j] - pos[j]) / _SOFT_BUFFER)
 
-    return cur * scale
+    total = exc * scale + g
+    return np.clip(total, -MAX_TOTAL_MA, MAX_TOTAL_MA)
 
 
 def main() -> None:
@@ -166,13 +214,16 @@ def main() -> None:
                         help='Command rate (Hz)')
     parser.add_argument('--robot-model',   default='vx300s',
                         help='Interbotix robot model string')
-    parser.add_argument('--min-ee-height', type=float, default=0.10,
-                        help='Min EE z-height (m) — higher than position script for safety')
+    parser.add_argument('--min-ee-height', type=float, default=0.05,
+                        help='Min EE z-height (m)')
     parser.add_argument('--seed',          type=int,   default=42,
                         help='RNG seed — use same seed to reproduce a trajectory')
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
+
+    print(f'[cur_mover] Loading gravity model from {URDF_PATH} …')
+    pin_model, pin_data = build_gravity_model()
 
     print(f'[cur_mover] Building {args.duration:.0f}s current trajectory @ {args.rate:.0f} Hz …')
     waypoints = build_trajectory(args.duration, args.rate, rng)
@@ -206,9 +257,15 @@ def main() -> None:
         return
 
     # ── Phase 3: switch to current mode and excite ───────────────────────────
+    # Sanity-check gravity currents at HOME so the user can spot unit errors
+    g_home = gravity_mA(pin_model, pin_data, HOME_POS)
+    print('[cur_mover] Gravity compensation at HOME (mA):')
+    for name, g in zip(JOINT_NAMES, g_home):
+        print(f'             {name:<14} {g:+7.1f} mA')
+
     print('[cur_mover] Switching arm to current-control mode …')
     bot.core.robot_set_operating_modes(cmd_type='group', name='arm', mode='current')
-    time.sleep(0.5)
+    # No sleep here — gravity compensation takes over immediately.
 
     print('[cur_mover] Executing current excitation …')
     t_start  = time.monotonic()
@@ -216,23 +273,29 @@ def main() -> None:
     n_zeroed = 0
 
     try:
-        for step_t, cur in waypoints:
+        for step_t, exc in waypoints:
             remaining = (t_start + step_t) - time.monotonic()
             if remaining > 0.0:
                 time.sleep(remaining)
 
-            pos       = monitor.get_positions()
-            safe_cur  = safety_scale(cur, pos, args.min_ee_height)
+            pos      = monitor.get_positions()
+            g_cur    = gravity_mA(pin_model, pin_data, pos)
+            total    = compute_current(exc, g_cur, pos, args.min_ee_height)
 
-            if np.any(safe_cur != cur):
+            if np.allclose(total, g_cur, atol=1.0):
                 n_zeroed += 1
 
-            monitor.send_current(safe_cur)
+            monitor.send_current(total)
             n_sent += 1
 
     finally:
-        monitor.zero_current()
-        time.sleep(0.2)
+        # Switch to position mode first — the servo immediately holds its current
+        # position under gravity. Zeroing current beforehand would leave the arm
+        # limp for the duration of the mode-switch call.
+        print('[cur_mover] Switching back to position-control mode …')
+        bot.core.robot_set_operating_modes(cmd_type='group', name='arm', mode='position')
+        time.sleep(0.3)
+        monitor.zero_current()  # clean up any residual current command on the bus
 
     elapsed     = time.monotonic() - t_start
     actual_rate = n_sent / elapsed if elapsed > 0 else 0.0
@@ -241,13 +304,8 @@ def main() -> None:
         f'(≈{actual_rate:.1f} Hz), {n_zeroed} steps safety-scaled'
     )
 
-    # ── Phase 4: return to position mode and sleep ───────────────────────────
-    print('[cur_mover] Switching back to position-control mode …')
-    bot.core.robot_set_operating_modes(cmd_type='group', name='arm', mode='position')
-    time.sleep(0.5)
-
     print('[cur_mover] Returning to sleep pose …')
-    bot.arm.go_to_sleep_pose()
+    bot.arm.go_to_sleep_pose(moving_time=3.0, accel_time=0.5)
 
     executor.shutdown(wait=False)
     print('[cur_mover] Done.')

@@ -6,7 +6,7 @@ Sends dynamically rich joint commands for system identification.
 Run in Terminal 2 AFTER starting record_joint_states.py in Terminal 1.
 
 Usage:
-    python3 run_sysid_trajectory.py --duration 60 --rate 50
+    python3 run_sysid_pos.py --duration 60 --rate 50
 
 No background spinning — all SDK calls stay in the main thread, so
 rclpy.spin_until_future_complete() inside the SDK never conflicts.
@@ -42,7 +42,7 @@ FREQS = np.array([0.30, 0.60, 1.00, 1.60, 2.50, 3.80])
 _Z_SHOULDER = 0.127   # base plate → shoulder pivot (m)
 _L_UPPER    = 0.200   # shoulder → elbow (m)
 _L_FORE     = 0.265   # elbow → wrist centre, incl. forearm offset (m)
-_L_HAND     = 0.170   # wrist centre → EE tip (m)
+_L_HAND     = 0.207   # wrist centre → EE tip (m)
 
 
 def ee_z_estimate(q: np.ndarray) -> float:
@@ -162,7 +162,7 @@ def main() -> None:
           f'(≈{actual_rate:.1f} Hz achieved)')
 
     print('[mover] Returning to sleep pose …')
-    bot.arm.go_to_sleep_pose()
+    bot.arm.go_to_sleep_pose(moving_time=3.0, accel_time=0.5)
     print('[mover] Done.')
 
 
