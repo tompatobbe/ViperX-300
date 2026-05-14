@@ -6,7 +6,7 @@ Sends dynamically rich joint commands for system identification.
 Run in Terminal 2 AFTER starting record_joint_states.py in Terminal 1.
 
 Usage:
-    python3 collect_arm_data_v2.py --duration 60 --rate 50
+    python3 run_sysid_trajectory.py --duration 60 --rate 50
 
 No background spinning — all SDK calls stay in the main thread, so
 rclpy.spin_until_future_complete() inside the SDK never conflicts.
@@ -163,7 +163,6 @@ def main() -> None:
 
     print('[mover] Returning to sleep pose …')
     bot.arm.go_to_sleep_pose()
-    bot.shutdown()
     print('[mover] Done.')
 
 

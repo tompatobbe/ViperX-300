@@ -62,7 +62,7 @@ ViperX-300/
 │   └── pinocchio_sim_clean.py     # Clean Pinocchio example
 │
 │── collect_arm_data.py            # Excitation trajectory mover + recorder (v1)
-│── collect_arm_data_v2.py         # Excitation trajectory mover only (pair with recorder)
+│── run_sysid_trajectory.py        # Excitation trajectory mover only (pair with recorder)
 │── record_arm_data_manual_movement.py  # Record while manually back-driving the arm
 │── record_joint_states.py         # Standalone joint state recorder
 │── collect_joint_torque_vel_accel.py   # Torque/vel/accel collector
@@ -90,7 +90,7 @@ python3 record_joint_states.py --duration 90 --rate 50 --output data/sysid_run1.
 
 In a second terminal, run the sum-of-sinusoids excitation trajectory:
 ```bash
-python3 collect_arm_data_v2.py --duration 90 --rate 50
+python3 run_sysid_trajectory.py --duration 90 --rate 50
 ```
 
 Or use the combined mover+recorder (v1):

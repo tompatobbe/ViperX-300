@@ -3,7 +3,7 @@
 VX300s joint-state CSV recorder (RECORDER).
 
 Pure rclpy subscriber — zero interbotix SDK dependency, zero executor conflicts.
-Run in Terminal 1 BEFORE starting collect_arm_data_v2.py in Terminal 2.
+Run in Terminal 1 BEFORE starting run_sysid_trajectory.py in Terminal 2.
 
 Usage:
     python3 record_joint_states.py --duration 60 --output data/arm_data.csv
