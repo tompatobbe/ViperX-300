@@ -4,7 +4,7 @@ ViperX 300s — Joint Data Viewer
 Interactive viewer for arm_data.csv — position, velocity & acceleration per joint.
 
 Usage:
-    python3 visualize_arm_data.py [path/to/arm_data.csv]
+python3 visualize_arm_data.py [path/to/arm_data.csv]
 
 Controls:
     Checkboxes on the right  — toggle individual joints on/off
