@@ -9,9 +9,9 @@ Loads a phi vector and reports:
   • Data quality stats: excitation range, velocity RMS
 
 Usage:
-  python diagnose_phi.py npy/phi_feasible_20260517_023032.npy
-  python diagnose_phi.py npy/phi_feasible_20260517_023032.npy --csv data/sysid_run1.csv
-  python diagnose_phi.py npy/phi_*.npy --compare          # overlay multiple npy files
+  python3 diagnose_phi.py npy/phi_feasible_20260517_023032.npy
+  python3 diagnose_phi.py npy/phi_feasible_20260517_023032.npy --csv data/sysid_run1.csv
+  python3 diagnose_phi.py npy/phi_*.npy --compare          # overlay multiple npy files
 """
 
 import argparse
