@@ -26,7 +26,6 @@ import scipy.signal as sig
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
 import pandas as pd
-import datetime
 import os
 
 # =============================================================================
@@ -415,7 +414,8 @@ def rel_metric(tau_true, tau_pred):
     return np.mean(np.abs(tau_true - tau_pred) / denom, axis=0)
 
 
-def identify(W_stacked, tau_stacked, phi0=None, w1=1.0, w2=1e-3, verbose=True):
+def identify(W_stacked, tau_stacked, phi0=None, w1=1.0, w2=5e-3,
+             method='SLSQP', verbose=True):
     if phi0 is None:
         phi0 = initial_phi_guess()
 
@@ -427,16 +427,31 @@ def identify(W_stacked, tau_stacked, phi0=None, w1=1.0, w2=1e-3, verbose=True):
         r = W_stacked @ phi - tau_stacked
         return 2*w1 * W_stacked.T @ r + 2*w2 * (phi - phi0)
 
+    slsqp_cons = feasibility_constraints(phi0)
+
+    if method == 'trust-constr':
+        from scipy.optimize import NonlinearConstraint
+        cons = [NonlinearConstraint(c['fun'], 0.0, np.inf, jac='2-point')
+                for c in slsqp_cons]
+        opts = {'maxiter': 2000, 'gtol': 1e-4, 'verbose': 0}
+    else:
+        cons = slsqp_cons
+        # eps=1e-4: larger FD step stabilises gradients of eigenvalue constraints,
+        # which are non-smooth at tiny perturbations (default ~1.5e-8 too small).
+        opts = {'maxiter': 500, 'ftol': 1e-6, 'disp': False, 'eps': 1e-4}
+
     if verbose:
-        print(f"Starting SLSQP — {N_PARAMS_T} params, {W_stacked.shape[0]} equations...")
-        n_con = len(feasibility_constraints(phi0))
-        print(f"  Constraints: {n_con} total  "
-              f"(24 original + 18 triangle-I^c + 5 mcy-sign)")
-    result = opt.minimize(objective, phi0, jac=gradient, method='SLSQP',
-                          constraints=feasibility_constraints(phi0),
-                          options={'maxiter': 2000, 'ftol': 1e-9, 'disp': verbose})
+        print(f"  Starting {method} ({len(slsqp_cons)} constraints, "
+              f"{W_stacked.shape[0]} equations)...")
+
+    import contextlib, io
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = opt.minimize(objective, phi0, jac=gradient, method=method,
+                              constraints=cons, options=opts)
+
     if verbose:
-        print(f"Status: {result.message}  cost={result.fun:.6f}")
+        status = 'converged' if result.success else f'stopped ({result.message})'
+        print(f"  {status} — cost: {result.fun:.3f}")
     return result.x
 
 
@@ -445,7 +460,7 @@ def identify(W_stacked, tau_stacked, phi0=None, w1=1.0, w2=1e-3, verbose=True):
 # =============================================================================
 
 def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
-                       verbose=True, plot=True):
+                       verbose=True, plot=True, method='trust-constr'):
     print("=" * 60)
     print(f"ViperX-300 SysID — Full feasibility (stride={stride})")
     print("=" * 60)
@@ -480,8 +495,9 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
     rel_ls = rel_metric(tau_meas, (W_rows @ phi_ls).reshape(N, N_JOINTS))
     print(f"\n    Unconstrained lstsq REL: {rel_ls.round(4)}  mean={rel_ls.mean():.4f}")
 
-    print("\n[5] Constrained identification (SLSQP, full feasibility)...")
-    phi_id = identify(W_norm, tau_norm, phi0=initial_phi_guess(), verbose=verbose)
+    print(f"\n[5] Constrained identification ({method}, full feasibility)...")
+    phi_id = identify(W_norm, tau_norm, phi0=initial_phi_guess(),
+                      verbose=verbose, method=method)
 
     tau_pred_id = (W_rows @ phi_id).reshape(N, N_JOINTS)
     rel_id = rel_metric(tau_meas, tau_pred_id)
@@ -557,13 +573,17 @@ if __name__ == "__main__":
     parser.add_argument("--fs",     type=float, default=50.0,  help="Sample rate Hz")
     parser.add_argument("--fc",     type=float, default=10.0,  help="LPF cutoff Hz")
     parser.add_argument("--stride", type=int,   default=1,     help="Subsample stride")
+    parser.add_argument("--method", default="trust-constr",
+                        choices=["trust-constr", "SLSQP"],
+                        help="Optimizer: trust-constr (default, robust) or SLSQP")
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args()
 
     phi = run_identification(args.csv, fs=args.fs, fc_lpf=args.fc,
-                             stride=args.stride, plot=not args.no_plot)
+                             stride=args.stride, plot=not args.no_plot,
+                             method=args.method)
     os.makedirs("npy", exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = f"npy/phi_feasible_{ts}.npy"
+    csv_stem = os.path.splitext(os.path.basename(args.csv))[0]
+    out_path = f"npy/phi_feasible_{csv_stem}.npy"
     np.save(out_path, phi)
     print(f"\nSaved to {out_path}")
