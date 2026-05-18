@@ -77,29 +77,32 @@ def run(path="data/arm_data.csv"):
     colors = [j[1] for j in available]
     n      = len(names)
 
-    pos   = [df[f"{nm}_pos"].values for nm in names]
-    vel   = [df[f"{nm}_vel"].values for nm in names]
-    accel = [make_accel(t, df[f"{nm}_vel"].values) for nm in names]
+    pos    = [df[f"{nm}_pos"].values for nm in names]
+    vel    = [df[f"{nm}_vel"].values for nm in names]
+    accel  = [make_accel(t, df[f"{nm}_vel"].values) for nm in names]
+    effort = [df[f"{nm}_effort"].values if f"{nm}_effort" in df.columns
+              else np.zeros(len(t)) for nm in names]
 
     # ── Figure & axes ─────────────────────────────────────────────────────────
     plt.style.use("dark_background")
-    fig = plt.figure(figsize=(17, 10), facecolor=BG_DARK)
+    fig = plt.figure(figsize=(17, 12), facecolor=BG_DARK)
     fig.canvas.manager.set_window_title("ViperX 300s  ·  Joint Data Viewer")
 
     LX, LW = 0.06, 0.74          # left plots: x-start, width
     RX, RW = 0.82, 0.17          # right panel: x-start, width
-    ROW_H  = 0.255
-    ROWS_Y = [0.695, 0.405, 0.115]  # y-start for pos / vel / accel rows
+    ROW_H  = 0.190
+    ROWS_Y = [0.760, 0.545, 0.330, 0.115]  # y-start for pos / vel / accel / effort rows
 
     ax_pos  = fig.add_axes([LX, ROWS_Y[0], LW, ROW_H], facecolor=BG_MID)
     ax_vel  = fig.add_axes([LX, ROWS_Y[1], LW, ROW_H], facecolor=BG_MID)
     ax_acc  = fig.add_axes([LX, ROWS_Y[2], LW, ROW_H], facecolor=BG_MID)
+    ax_eff  = fig.add_axes([LX, ROWS_Y[3], LW, ROW_H], facecolor=BG_MID)
     ax_chk  = fig.add_axes([RX, 0.13,      RW, 0.80],  facecolor=BG_PANEL)
 
-    all_axes   = [ax_pos, ax_vel, ax_acc]
-    all_data   = [pos,    vel,    accel]
-    ylabels    = ["Position  (rad)", "Velocity  (rad/s)", "Acceleration  (rad/s²)"]
-    row_titles = ["Position", "Velocity", "Acceleration"]
+    all_axes   = [ax_pos, ax_vel, ax_acc, ax_eff]
+    all_data   = [pos,    vel,    accel,  effort]
+    ylabels    = ["Position  (rad)", "Velocity  (rad/s)", "Acceleration  (rad/s²)", "Effort  (Nm)"]
+    row_titles = ["Position", "Velocity", "Acceleration", "Effort"]
 
     # ── Plot lines ────────────────────────────────────────────────────────────
     lines_by_row = []
@@ -121,7 +124,8 @@ def run(path="data/arm_data.csv"):
     # Share x-axis ticks; only bottom row gets x-label
     ax_pos.set_xticklabels([])
     ax_vel.set_xticklabels([])
-    ax_acc.set_xlabel("Time  (s)", color="#aaaacc", fontsize=9)
+    ax_acc.set_xticklabels([])
+    ax_eff.set_xlabel("Time  (s)", color="#aaaacc", fontsize=9)
 
     # Legend inside position plot
     legend = ax_pos.legend(
