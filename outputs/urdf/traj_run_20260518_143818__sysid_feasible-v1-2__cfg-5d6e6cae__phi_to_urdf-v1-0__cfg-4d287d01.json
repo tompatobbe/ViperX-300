@@ -1,0 +1,27 @@
+{
+  "input_file": "outputs/traj_run_20260518_143818/traj_run_20260518_143818__sysid_feasible-v1-2__cfg-5d6e6cae.npy",
+  "output_file": "outputs/urdf/traj_run_20260518_143818__sysid_feasible-v1-2__cfg-5d6e6cae__phi_to_urdf-v1-0__cfg-4d287d01.urdf",
+  "pipeline_name": "phi_to_urdf",
+  "pipeline_version": "1.0",
+  "config": {
+    "mode": "standalone",
+    "template": null,
+    "link_names": [
+      "waist_link",
+      "upper_arm_link",
+      "forearm_link",
+      "wrist_link",
+      "gripper_link",
+      "ee_arm"
+    ],
+    "robot_name": "viper300_sysid"
+  },
+  "config_hash": "4d287d01",
+  "created_at": "2026-05-19T08:05:00.899211+00:00",
+  "git_commit": "d4615fa",
+  "source_checksum": "sha256:25f05cba43dbc75d3cf31f5b3b0fad908b1fc1e2383f3573381dc592bb2ef581",
+  "content_length": 5357,
+  "hostname": "Tobbes-dator",
+  "python_version": "3.10.12",
+  "numpy_version": "1.26.4"
+}

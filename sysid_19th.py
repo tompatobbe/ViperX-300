@@ -28,11 +28,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 
-import pipeline_artifacts
-
-PIPELINE_NAME    = "sysid_feasible"
-PIPELINE_VERSION = "1.3"   # bump whenever the algorithm changes
-
 # =============================================================================
 # 1. DH kinematics  (unchanged from sysid_fast.py)
 # =============================================================================
@@ -327,26 +322,24 @@ _MCY_SIGN_CONSTRAINTS = [
 ]
 
 
-def feasibility_constraints(phi, with_ic_pd=True):
+def feasibility_constraints(phi):
     """
-    Physical feasibility constraints (each 'ineq' entry must be ≥ 0).
+    Full set of physical feasibility constraints for SLSQP (each 'ineq' entry
+    must evaluate to a non-negative scalar).
 
-    Per-link always-on (6 × 4 = 24 constraints):
+    Per-link (6 × 4 = 24 constraints from sysid_fast.py):
       • mass > 0
       • pseudo-inertia 4×4 PD  (min eigenvalue ≥ ε)
       • Fv ≥ 0
       • Fc ≥ 0
 
-    Per-link I^c PD — only when with_ic_pd=True (6 × 1 = 6 constraints, eq. 16c):
-      • min eigenvalue of I^c ≥ ε
-        Stage 1 omits this so F0/friction converge first; Stage 2 adds it.
-
-    Per-link triangle inequalities on I^c (6 × 3 = 18 constraints, eqs. 16d–f):
+    NEW — per-link triangle inequalities on I^c (6 × 3 = 18 constraints):
       • λ₁(I^c) + λ₂(I^c) ≥ λ₃(I^c)
       • λ₂(I^c) + λ₃(I^c) ≥ λ₁(I^c)
       • λ₁(I^c) + λ₃(I^c) ≥ λ₂(I^c)
 
-    First mass moment sign constraints (5 constraints, eq. 16i).
+    NEW — first mass moment sign constraints (5 constraints, eq. 16i):
+      • mcy for links 1-5 (0-indexed) with ViperX-300-specific signs
     """
     constraints = []
 
@@ -365,13 +358,7 @@ def feasibility_constraints(phi, with_ic_pd=True):
         constraints.append({'type': 'ineq', 'fun': lambda phi, j=idx+10: phi[j]})
         constraints.append({'type': 'ineq', 'fun': lambda phi, j=idx+11: phi[j]})
 
-        # paper eq. 16c: I^c ≻ 0 — added only in Stage 2
-        if with_ic_pd:
-            def min_eig_ic(phi, idx=idx):
-                return np.min(np.linalg.eigvalsh(inertia_at_com(phi[idx:idx+N_PARAMS]))) - 1e-6
-            constraints.append({'type': 'ineq', 'fun': min_eig_ic})
-
-        # triangle inequalities on principal moments of I^c (eqs. 16d–f)
+        # --- NEW: triangle inequalities on principal moments of I^c ---
         for k in range(3):
             def tri_ineq(phi, idx=idx, k=k):
                 return triangle_ineq_values(phi[idx:idx+N_PARAMS])[k]
@@ -427,79 +414,45 @@ def rel_metric(tau_true, tau_pred):
     return np.mean(np.abs(tau_true - tau_pred) / denom, axis=0)
 
 
-def identify(W_base, tau_stacked, L_mat, phi0=None, w1=1.0, w2=5e-3,
-             method='SLSQP', verbose=True, with_ic_pd=True):
-    """
-    Paper eq. 16: joint optimisation over (phi_b, phi).
-
-    min  w1*||W_base @ phi_b - tau||^2 + w2*||phi_b - L.T @ phi||^2
-    s.t. feasibility constraints on phi (standard parameters)
-
-    W_base     : (N_eq, rank)       full-rank base regressor
-    L_mat      : (N_PARAMS_T, rank) L s.t. W_full ≈ W_base @ L.T
-    phi0       : (N_PARAMS_T,)      initial standard-parameter guess (warm-start)
-    with_ic_pd : include I^c ≻ 0 constraint (paper eq. 16c).
-                 Set False for Stage 1 so F0/friction converge without fighting
-                 the inertia PD constraint; True for Stage 2 warm-started from
-                 Stage 1's solution.
-
-    Returns phi (N_PARAMS_T,) — standard parameters.
-    """
-    rank = W_base.shape[1]
-
+def identify(W_stacked, tau_stacked, phi0=None, w1=1.0, w2=5e-3,
+             method='SLSQP', verbose=True):
     if phi0 is None:
         phi0 = initial_phi_guess()
 
-    # Start with phi_b consistent with phi0 so the coupling term begins at zero.
-    phi_b0 = L_mat.T @ phi0
-    x0 = np.concatenate([phi_b0, phi0])
+    def objective(phi):
+        r = W_stacked @ phi - tau_stacked
+        return w1 * r @ r + w2 * (phi - phi0) @ (phi - phi0)
 
-    def objective(x):
-        phi_b = x[:rank]
-        phi   = x[rank:]
-        r = W_base @ phi_b - tau_stacked
-        c = phi_b - L_mat.T @ phi
-        return w1 * float(r @ r) + w2 * float(c @ c)
+    def gradient(phi):
+        r = W_stacked @ phi - tau_stacked
+        return 2*w1 * W_stacked.T @ r + 2*w2 * (phi - phi0)
 
-    def gradient(x):
-        phi_b = x[:rank]
-        phi   = x[rank:]
-        r = W_base @ phi_b - tau_stacked
-        c = phi_b - L_mat.T @ phi
-        g_phi_b = 2*w1 * (W_base.T @ r) + 2*w2 * c
-        g_phi   = -2*w2 * (L_mat @ c)
-        return np.concatenate([g_phi_b, g_phi])
-
-    # Feasibility constraints act on phi = x[rank:] only.
-    raw_cons = feasibility_constraints(None, with_ic_pd=with_ic_pd)
-
-    def wrap(fun):
-        return lambda x: fun(x[rank:])
+    slsqp_cons = feasibility_constraints(phi0)
 
     if method == 'trust-constr':
         from scipy.optimize import NonlinearConstraint
-        cons = [NonlinearConstraint(wrap(c['fun']), 0.0, np.inf, jac='2-point')
-                for c in raw_cons]
+        cons = [NonlinearConstraint(c['fun'], 0.0, np.inf, jac='2-point')
+                for c in slsqp_cons]
         opts = {'maxiter': 2000, 'gtol': 1e-4, 'verbose': 0}
     else:
-        cons = [{'type': c['type'], 'fun': wrap(c['fun'])} for c in raw_cons]
-        # eps=1e-4: larger FD step stabilises gradients of eigenvalue constraints.
-        opts = {'maxiter': 1000, 'ftol': 1e-6, 'disp': False, 'eps': 1e-4}
+        cons = slsqp_cons
+        # eps=1e-4: larger FD step stabilises gradients of eigenvalue constraints,
+        # which are non-smooth at tiny perturbations (default ~1.5e-8 too small).
+        opts = {'maxiter': 500, 'ftol': 1e-6, 'disp': False, 'eps': 1e-4}
 
-    ic_label = '+I^c PD' if with_ic_pd else 'no I^c PD'
     if verbose:
-        print(f"  Starting {method} ({len(raw_cons)} constraints [{ic_label}], "
-              f"joint variable: {rank} base + {N_PARAMS_T} standard = {rank+N_PARAMS_T})...")
+        print(f"  Starting {method} ({len(slsqp_cons)} constraints, "
+              f"{W_stacked.shape[0]} equations)...")
 
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
-        result = opt.minimize(objective, x0, jac=gradient, method=method,
+        result = opt.minimize(objective, phi0, jac=gradient, method=method,
                               constraints=cons, options=opts)
 
     if verbose:
         status = 'converged' if result.success else f'stopped ({result.message})'
         print(f"  {status} — cost: {result.fun:.3f}")
-    return result.x[rank:]   # return standard parameters phi
+    return result.x
 
 
 # =============================================================================
@@ -507,8 +460,7 @@ def identify(W_base, tau_stacked, L_mat, phi0=None, w1=1.0, w2=5e-3,
 # =============================================================================
 
 def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
-                       verbose=True, plot=True, method='trust-constr',
-                       w1=1.0, w2=5e-3):
+                       verbose=True, plot=True, method='trust-constr'):
     print("=" * 60)
     print(f"ViperX-300 SysID — Full feasibility (stride={stride})")
     print("=" * 60)
@@ -543,27 +495,13 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
     rel_ls = rel_metric(tau_meas, (W_rows @ phi_ls).reshape(N, N_JOINTS))
     print(f"\n    Unconstrained lstsq REL: {rel_ls.round(4)}  mean={rel_ls.mean():.4f}")
 
-    W_base_norm = W_norm[:, base_cols]
-
-    # --- Stage 1: no I^c PD — anchors F0 and friction values ---
-    print(f"\n[5a] Stage 1 — {method}, without I^c PD (anchors F0/friction)...")
-    phi_s1 = identify(W_base_norm, tau_norm, L_mat, phi0=initial_phi_guess(),
-                      verbose=verbose, method=method, w1=w1, w2=w2,
-                      with_ic_pd=False)
-
-    tau_pred_s1 = (W_rows @ phi_s1).reshape(N, N_JOINTS)
-    rel_s1 = rel_metric(tau_meas, tau_pred_s1)
-    print(f"    Stage 1 REL: {rel_s1.round(4)}  mean={rel_s1.mean():.4f}")
-
-    # --- Stage 2: add I^c PD, warm-started from Stage 1 ---
-    print(f"\n[5b] Stage 2 — {method}, +I^c PD, warm-started from Stage 1...")
-    phi_id = identify(W_base_norm, tau_norm, L_mat, phi0=phi_s1,
-                      verbose=verbose, method=method, w1=w1, w2=w2,
-                      with_ic_pd=True)
+    print(f"\n[5] Constrained identification ({method}, full feasibility)...")
+    phi_id = identify(W_norm, tau_norm, phi0=initial_phi_guess(),
+                      verbose=verbose, method=method)
 
     tau_pred_id = (W_rows @ phi_id).reshape(N, N_JOINTS)
     rel_id = rel_metric(tau_meas, tau_pred_id)
-    print(f"\n[6] Stage 2 REL: {rel_id.round(4)}  mean={rel_id.mean():.4f}")
+    print(f"\n[6] Constrained REL: {rel_id.round(4)}  mean={rel_id.mean():.4f}")
 
     print("\n[7] Identified friction parameters:")
     print(f"{'Joint':<14} {'Fv':>10} {'Fc':>10} {'F0':>10}")
@@ -584,19 +522,17 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
 
         mass_ok  = pl[0] > 0
         psd_ok   = np.all(eigs_pseudo >= -1e-4)
-        ic_pd_ok = eigs_ic.min() >= -1e-4          # paper eq. 16c: I^c ≻ 0
         tri_ok   = np.all(tri >= -1e-4)
         fric_ok  = pl[10] >= 0 and pl[11] >= 0
-        link_ok  = mass_ok and psd_ok and ic_pd_ok and tri_ok and fric_ok
+        link_ok  = mass_ok and psd_ok and tri_ok and fric_ok
         all_ok  &= link_ok
 
         print(f"  Link {i+1} ({ARM_JOINTS[i]}):")
         print(f"    m={pl[0]:.4f}  mcy={pl[2]:.5f}  "
               f"pseudo_min_eig={eigs_pseudo.min():.4f}  "
               f"Fv={pl[10]:.4f}  Fc={pl[11]:.4f}  [{'OK' if link_ok else 'FAIL'}]")
-        print(f"    I^c eigenvalues: {eigs_ic.round(5)}  min={eigs_ic.min():.5f}  "
-              f"[{'OK' if ic_pd_ok else 'FAIL (16c)'}]")
-        print(f"    triangle slack: {tri.round(5)}  [{'OK' if tri_ok else 'FAIL (16d-f)'}]")
+        print(f"    I^c eigenvalues: {eigs_ic.round(5)}  "
+              f"triangle slack: {tri.round(5)}  [{'OK' if tri_ok else 'FAIL'}]")
 
     print("\n  mcy sign constraints (eq. 16i):")
     for link_idx, sign in _MCY_SIGN_CONSTRAINTS:
@@ -632,66 +568,22 @@ def _plot_results(t, tau_meas, tau_pred, rel):
 
 if __name__ == "__main__":
     import argparse
-    import sys
-
     parser = argparse.ArgumentParser(description="ViperX-300 sysid — full feasibility")
-    parser.add_argument("csv",       nargs="?", default="data/sysid_run1.csv")
-    parser.add_argument("--fs",      type=float, default=50.0,   help="Sample rate Hz")
-    parser.add_argument("--fc",      type=float, default=10.0,   help="LPF cutoff Hz")
-    parser.add_argument("--stride",  type=int,   default=1,      help="Subsample stride")
-    parser.add_argument("--w1",      type=float, default=1.0,    help="Data-fit weight")
-    parser.add_argument("--w2",      type=float, default=5e-3,   help="Coupling weight")
-    parser.add_argument("--method",  default="trust-constr",
+    parser.add_argument("csv", nargs="?", default="data/sysid_run1.csv")
+    parser.add_argument("--fs",     type=float, default=50.0,  help="Sample rate Hz")
+    parser.add_argument("--fc",     type=float, default=10.0,  help="LPF cutoff Hz")
+    parser.add_argument("--stride", type=int,   default=1,     help="Subsample stride")
+    parser.add_argument("--method", default="trust-constr",
                         choices=["trust-constr", "SLSQP"],
                         help="Optimizer: trust-constr (default, robust) or SLSQP")
     parser.add_argument("--no-plot", action="store_true")
-    parser.add_argument("--force",   action="store_true",
-                        help="Recompute even if an identical artifact already exists")
-    parser.add_argument("--outputs-dir", default=None,
-                        help="Override output root directory (default: outputs/)")
-    parser.add_argument("--migrate-legacy", action="store_true",
-                        help="Import old npy/ files into the new outputs/ structure and exit")
     args = parser.parse_args()
 
-    if args.migrate_legacy:
-        n = pipeline_artifacts.migrate_legacy(outputs_root=args.outputs_dir or "outputs")
-        print(f"Migrated {n} file(s) from npy/ → outputs/legacy/")
-        sys.exit(0)
-
-    # Build the config dict — every parameter that affects the output numerics.
-    config = {
-        "fs":     args.fs,
-        "fc_lpf": args.fc,
-        "stride": args.stride,
-        "method": args.method,
-        "w1":     args.w1,
-        "w2":     args.w2,
-    }
-
-    # Cache-hit check: skip expensive computation if the artifact already exists.
-    if not args.force:
-        cached = pipeline_artifacts.load_artifact(
-            args.csv, PIPELINE_NAME, PIPELINE_VERSION, config, args.outputs_dir
-        )
-        if cached is not None:
-            npy_p, _ = pipeline_artifacts.artifact_path(
-                args.csv, PIPELINE_NAME, PIPELINE_VERSION, config, args.outputs_dir
-            )
-            print(f"\n[cache] Artifact already exists — skipping computation.")
-            print(f"  {npy_p}")
-            print("  Pass --force to recompute.")
-            sys.exit(0)
-
-    phi = run_identification(
-        args.csv,
-        fs=args.fs, fc_lpf=args.fc, stride=args.stride,
-        plot=not args.no_plot, method=args.method,
-        w1=args.w1, w2=args.w2,
-    )
-
-    npy_path, json_path = pipeline_artifacts.save_artifact(
-        phi, args.csv, PIPELINE_NAME, PIPELINE_VERSION, config,
-        outputs_root=args.outputs_dir,
-    )
-    print(f"\nSaved  →  {npy_path}")
-    print(f"Sidecar →  {json_path}")
+    phi = run_identification(args.csv, fs=args.fs, fc_lpf=args.fc,
+                             stride=args.stride, plot=not args.no_plot,
+                             method=args.method)
+    os.makedirs("npy", exist_ok=True)
+    csv_stem = os.path.splitext(os.path.basename(args.csv))[0]
+    out_path = f"npy/phi_feasible_{csv_stem}.npy"
+    np.save(out_path, phi)
+    print(f"\nSaved to {out_path}")
