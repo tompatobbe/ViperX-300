@@ -9,6 +9,216 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-10 — FINAL identified model (stride-1): identification phase complete
+
+**Area:** identification deliverable · `outputs/` artifacts
+
+### The model
+Production run at full resolution with the settled recipe:
+```
+python3 sysid_feasible.py data/traj_run_20260518_143818.csv --no-plot --stride 1 \
+  --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL
+```
+- **phi:**  `outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef.npy`
+- **URDF:** `outputs/urdf/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef__phi_to_urdf-v1-0__cfg-3ef0a00c.urdf`
+- Identification: REL mean **0.5997** (= lstsq 0.5899), `[8] Overall: [ALL OK]`,
+  status `optimal` (CLARABEL). Masses [0.50, 0.50, 0.263, 0.027, 0.027, 0.027] kg.
+
+### Validation (`compare_urdf_performance.py --friction`, vs `vx300s.urdf`)
+| friction-fitted, mean | A baseline | **B (final)** |
+|---|---|---|
+| RMSE [Nm] | 2.682 | **0.822** (−69.3%) |
+| MAE [Nm] | 0.753 | **0.386** |
+
+Beats the manufacturer URDF on every meaningful joint (elbow friction RMSE 3.32 →
+0.95, REL 0.18). Matches the stride-5 result (0.816/0.386) → stable across
+resolution. Only forearm_roll (−0.04) and wrist_rotate (−0.14 Nm, τ_max 0.07)
+slightly trail A — negligible, low-torque, the generic inertia blob.
+
+### Impact
+**Identification phase complete.** This URDF is the physically-feasible, data-only
+dynamic model that was the prerequisite for the control phase (paper §4–5 ERG +
+robust law). Control work is now unblocked — see `docs/PAPER_SUMMARY.md` §10 and
+`control/trq.py` (torque→current mapping already in place).
+
+### Open questions / assumptions (carry into the thesis Discussion)
+- **Held-in** validation only (identified & validated on the same run). A held-out
+  trajectory is needed for a defensible generalisation claim — first control-phase
+  to-do, or collect a second run.
+- Per-link **inertias ≈ the generic blob** (~0.002): this single trajectory does
+  not excite the inertia split; only gravity (`mc`) and friction are identified.
+  REL floor 0.59 vs the paper's 0.43 → the gap is excitation, not the solver.
+  Implementing the paper's Eq. 11 condition-number-optimised excitation trajectory
+  is the main lever to identify more and is itself a thesis contribution.
+
+---
+
+## 2026-06-10 — Tuned the realisation (w2 ↑, γ=0.05): best validated model so far
+
+**Area:** `sysid_feasible.py` (cvxpy path, `--w2`/`--entropic`) · identification/validation
+
+### Problem / Motivation
+With the bounded log-det divergence (`--entropic`), even tiny γ raised REL to ~0.65
+and would not return to the 0.59 baseline. Diagnosis: the reference blob `P0` has
+**zero first moments** (CoM=0), so the divergence pulls the *identifiable* first
+moments `mc` (which set gravity, esp. elbow/shoulder) toward 0. The standard params
+were tied to the data only through the paper's weak coupling weight `w2 = 5e-3`
+(Eq. 16a 2nd term), which the divergence (~7 in cost units) easily overwhelmed.
+
+### Change
+No code change — **tuned the paper's own Eq. 16a weight `w2`**. Sweeping `w2` at
+γ=0.05 confirmed the mechanism: as `w2` rises, the data reclaims the identifiable
+directions and REL falls back to baseline.
+
+| `w2` (γ=0.05) | REL mean | elbow REL | masses 4–6 |
+|---|---|---|---|
+| 1 | 0.628 | 0.381 | 0.12 |
+| 10 | 0.616 | 0.370 | 0.07 |
+| **100** | **0.599** | 0.273 | 0.029 |
+
+Chosen operating point: **`--w2 100 --entropic 0.05`** (defaults `--ref-mass 0.5`,
+`--ref-inertia 1e-3`). Masses: [0.50, 0.50, 0.23, 0.029, 0.029, 0.029] kg —
+non-degenerate (smallest = 29 g, ~30000× above the γ=0 `1e-6`), so `phi_to_urdf`
+exports with no `--mass-floor`. The waist/shoulder masses pinning at exactly
+`ref_mass` reflects that their absolute mass is essentially **unobservable** from
+this trajectory; the shrinking distal masses reflect that those light links are
+barely excited. Honest "observable-from-data, unobservable-from-prior" split.
+
+### Evidence — beats the manufacturer baseline AND the γ=0 model
+`compare_urdf_performance.py --friction` (stride 5 model), friction-fitted mean:
+
+| | A `vx300s.urdf` | γ=0 SDP | **w2=100, γ=0.05** |
+|---|---|---|---|
+| RMSE [Nm] | 2.682 | 0.945 | **0.816** (−69.6% vs A) |
+| MAE [Nm] | 0.753 | 0.406 | **0.386** |
+
+Best model to date. The **elbow improved** in validation (friction RMSE 1.899 →
+0.894) despite slightly higher identification REL — the generic-blob inertias
+generalise better than the degenerate γ=0 realisation. Minor regressions vs A on
+two very-low-torque joints (forearm_roll −0.04, wrist_rotate −0.14 Nm; the 0.002
+blob inertia adds slight spurious inertial torque on wrist_rotate, τ_max 0.07 Nm).
+
+### Impact
+Settled identification recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver
+CLARABEL`. **Next:** final `--stride 1` run at these settings → export → validate →
+the control-ready, validated URDF (unblocks the control phase). Setting `w2` strong
+is paper-faithful (it is Eq. 16a's coupling weight); the entropy prior is our
+documented deviation (see THESIS_NOTES).
+
+### Open questions / assumptions
+- Still **held-in** validation (identified and validated on the same run); a
+  held-out run is needed for a defensible generalisation claim.
+- Per-link inertias are ≈ the generic blob (`~0.002`) — this trajectory does not
+  observe the inertia split; only gravity (`mc`) and friction are well-determined.
+  Richer excitation (paper Eq. 11) would identify more; REL floor 0.59 vs paper 0.43.
+
+---
+
+## 2026-06-10 — Convex SDP: first run result + entropic regulariser for URDF export
+
+**Area:** `sysid_feasible.py` (`identify_sdp`, feasibility check, CLI) · identification
+
+### Problem / Motivation
+First execution of the convex SDP (`--method cvxpy`, SCS) on
+`traj_run_20260518_143818.csv` (`--stride 5`). The solve succeeded
+(`status: optimal`) and — crucially — **preserved the fit**: REL mean **0.5921**
+vs the unconstrained-lstsq baseline 0.5910, i.e. imposing physical feasibility
+cost the fit essentially nothing. This is what *neither* NLP solver achieved
+(trust-constr: feasible but REL 0.82; SLSQP: REL 0.60 but infeasible). Two
+artefacts remained: (i) the feasibility report flagged links 3–4 as FAIL, and
+(ii) per-link masses collapsed toward zero (m≈0 for links 1–2), which **blocks
+`phi_to_urdf.py`** (it rejects near-zero mass at line ~162).
+
+### Change
+1. **Feasibility-check tolerance (correctness, reporting only).** The friction
+   check used a strict `Fv,Fc >= 0` while every other check allows `−1e-4` slack.
+   SCS (first-order) returns the constrained `Fv` at ≈ −1e-7, so links 3–4 were
+   spuriously failed. Aligned the friction tolerance to `−1e-4`. The saved `phi`
+   is unchanged; only the printed verdict is corrected.
+2. **Entropic (log-det) regulariser — `--entropic γ`.** Added the model-free
+   maximum-entropy term `−γ·Σ_i log det P_i(φ)` to `identify_sdp` (off by default,
+   γ=0 ⇒ exact paper Eq. 16). `log det P` is concave; minimising `−log det P` is
+   convex, so the problem stays a single global SDP. It resolves the
+   *standard*-parameter non-uniqueness (the identified model lives in the base
+   parameters; the URDF realisation is non-unique) by spreading inertia into the
+   unidentifiable null-space → non-degenerate, physically consistent link masses,
+   **without any CAD/reference prior** (thesis-integrity constraint preserved).
+3. **`--solver` override** (e.g. CLARABEL). CLARABEL is interior-point and more
+   accurate near the feasibility margins than the default SCS.
+4. Threaded both options through `run_identification` and into the artifact
+   config dict (so the config hash / provenance sidecar capture them).
+5. **`phi_to_urdf.py --mass-floor` (validation-only escape hatch).** The γ=0 SDP
+   model has collapsed (near-zero) link masses, which the export guard rejects.
+   `--mass-floor` clamps only the CoM/parallel-axis *divisor*; because those links
+   also have near-zero first moment `mc`, `mc (= m·c)` and `J_O` are preserved
+   exactly → the emitted URDF is **torque-faithful** (RNEA depends only on `mc, J_O`)
+   even though its masses are not a physical realisation. This lets us sanity-check
+   the SDP model's torque prediction *before* committing to the entropic-regulariser
+   realisation. Captured in the URDF artifact config hash.
+
+### Run result (entropic γ=0.01, CLARABEL) — regulariser needs to be bounded
+The first entropic run **failed informatively**: REL mean rose to 0.97 and link
+masses 1–2 exploded to ≈ 8200 kg. `−log det P` is monotone increasing and
+**unbounded above**, so it drives the unidentifiable (null-space) masses toward
+infinity — and this is *not* fixable by lowering γ (a data-free direction's optimum
+is +∞ for any γ>0). Decision (with the thesis author): switch to the **bounded
+log-det Bregman divergence** (below).
+
+### Sanity validation of the γ=0 SDP model — beats the manufacturer baseline
+Before investing in the realisation, the γ=0 cvxpy model was exported (via
+`phi_to_urdf --mass-floor`, the masses being ~1e-6 at the LMI's `EPS` margin) and
+validated with `compare_urdf_performance.py --friction` on the identification run:
+
+| mean over 6 joints | A `vx300s.urdf` | B (γ=0 SDP) | B improvement |
+|---|---|---|---|
+| rigid-body RMSE | 3.025 Nm | **1.330 Nm** | −56% |
+| friction-fitted RMSE | 2.682 Nm | **0.945 Nm** | −65% |
+| friction-fitted MAE | 0.753 Nm | **0.406 Nm** | −46% |
+
+B beats A on **every** joint; the friction-fitted REL 0.582 matches the
+identification REL 0.59 → the URDF round-trip is faithful. **This is the best
+model so far** (prev. best trust-constr MAE 0.708). The degenerate masses do not
+hurt torque prediction (RNEA uses only base parameters), so the SDP model is
+validated and only the *realisation* (control-ready masses) remains. Caveat:
+training-set error, not held-out — the excitation/held-out question still stands.
+
+### Bounded log-det divergence — implemented
+Replaced the unbounded `−γ·Σ log det P` with the convex log-det Bregman divergence
+`+γ·Σ_i [ tr(P0⁻¹·P_i) − log det P_i ]` toward a generic isotropic reference
+`P0 = diag(ref_inertia·I₃, ref_mass)` (defaults 1e-3 kg·m², 0.5 kg; `--ref-mass`,
+`--ref-inertia`). It is ≥0, convex, and minimised at `P_i = P0`, so the `tr` term
+bounds masses from above (fixing the explosion) while `−log det P` lifts them off
+zero. Verified: an otherwise-free pseudo-inertia converges to `diag(P0)`.
+**Next:** run `--entropic γ` (start ~0.1, CLARABEL), tune the smallest γ that gives
+plausible non-degenerate masses while REL stays ≈ 0.59, then export (no mass-floor
+needed) → re-validate → this becomes the control-ready URDF.
+
+### Evidence
+- SDP run: `status: optimal`, cost 2517.752; REL `[0.69 0.76 0.16 0.33 0.61 1.00]`
+  mean 0.5921 (≈ lstsq 0.5910). All LMI / Iᶜ / triangle / mcy-sign constraints
+  pass; the only FAILs were the friction-tolerance artefact above.
+- `cp.log_det(P)` with a 4×4 PSD `P` solves under CLARABEL (`status: optimal`) —
+  the regulariser is DCP-valid and supported by the installed backend.
+
+### Impact
+- Identification default behaviour is unchanged (γ=0). Adding `entropic`/`solver`
+  to the config dict changes the config hash, so a re-run of any method recomputes
+  rather than cache-hitting; previously-saved artefacts remain on disk.
+- **Next:** re-run cvxpy with a small `--entropic γ` (+ `--solver CLARABEL`),
+  tune γ for the smallest value giving plausible masses, then `phi_to_urdf.py`
+  (now unblocked) → `compare_urdf_performance.py` vs the 0.753 Nm baseline.
+
+### Open questions / assumptions
+- γ is a free hyper-parameter with no data-driven optimum; it trades fit against
+  inertia "fullness". Choose the smallest γ that lifts masses off zero so the fit
+  (REL) is essentially unperturbed — to be reported in THESIS_NOTES.
+- `log det P` mixes parameter scales (mass O(1), moments O(1e-3)); the LMI margin
+  `EPS=1e-6` bounds det away from 0, so the term is finite, but the resulting mass
+  distribution is an entropy-maximising realisation, **not** a claim about true
+  per-link masses (only the base parameters are claimed identified).
+
+---
+
 ## 2026-06-10 — Re-identified with corrected units (v1.4): result & diagnosis
 
 **Area:** identification result (`sysid_feasible.py` v1.4) · validation.

@@ -1,0 +1,38 @@
+{
+  "input_file": "data/traj_run_20260518_143818.csv",
+  "output_file": "outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef.npy",
+  "pipeline_name": "sysid_feasible",
+  "pipeline_version": "1.4",
+  "config": {
+    "fs": 50.0,
+    "fc_lpf": 10.0,
+    "stride": 1,
+    "method": "cvxpy",
+    "w1": 1.0,
+    "w2": 100.0,
+    "entropic": 0.05,
+    "solver": "CLARABEL",
+    "ref_mass": 0.5,
+    "ref_inertia": 0.001,
+    "torque_constant": 2.409,
+    "motors_per_joint": [
+      1,
+      2,
+      2,
+      1,
+      1,
+      1
+    ]
+  },
+  "config_hash": "640cb8ef",
+  "created_at": "2026-06-10T23:12:53.164137+00:00",
+  "git_commit": "b6edfab",
+  "source_checksum": "sha256:fbbbd1be11b79fba67a5bd5353141dd6bfcb2425f197d83a7b2216503aaf5849",
+  "output_shape": [
+    78
+  ],
+  "output_dtype": "float64",
+  "hostname": "Tobbes-dator",
+  "python_version": "3.10.12",
+  "numpy_version": "1.26.4"
+}

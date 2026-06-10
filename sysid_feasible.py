@@ -513,7 +513,9 @@ def identify(W_base, tau_stacked, L_mat, phi0=None, w1=1.0, w2=5e-3,
     return result.x[rank:]   # return standard parameters phi
 
 
-def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
+def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True,
+                 entropic_gamma=0.0, solver=None,
+                 ref_mass=0.5, ref_inertia=1e-3):
     """
     Convex SDP form of the paper's identification problem (eq. 16), solved with
     CVXPY. This is the paper-faithful route (the paper uses YALMIP, i.e. an SDP
@@ -534,6 +536,24 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
 
     The data term is rewritten via the Gram matrix (WᵀW, Wᵀτ) so the problem size
     is independent of the number of samples.
+
+    `entropic_gamma > 0` adds the **model-free log-det (Bregman) divergence
+    regulariser** (Wensing, Kim & Slotine 2017 — ref [53]):
+
+        +γ·Σ_i [ tr(P0⁻¹·P_i) − log det P_i ]       (convex, ≥0, min at P_i = P0)
+
+    The base parameters fix what the data determines; the *standard* parameters
+    are a non-unique realisation, and the unregularised SDP collapses the
+    unidentifiable masses toward zero (PSD but degenerate), which blocks URDF
+    export. The reference P0 = diag(ref_inertia·I₃, ref_mass) is a **generic
+    isotropic blob — the SAME uninformative shape for every link, NOT the CAD
+    model**, so the demonstration stays "from data alone". Both terms matter:
+    `−log det P` (concave entropy; minimising its negative is convex → SDP stays
+    convex) lifts masses *off* zero, and `tr(P0⁻¹·P)` *bounds them from above*
+    (pure `−log det P` is unbounded and explodes the free masses → ∞). The
+    minimiser P_i = P0 means free masses settle near `ref_mass` and CoMs near 0.
+    γ=0 reproduces the exact paper Eq. 16; pick the smallest γ that gives
+    non-degenerate masses so the torque fit (REL) is essentially unperturbed.
 
     Returns phi (N_PARAMS_T,) — standard parameters.
     """
@@ -556,10 +576,10 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
 
     data_term = cp.quad_form(phi_b, cp.psd_wrap(G)) - 2.0 * (b @ phi_b) + const
     coupling  = cp.sum_squares(phi_b - L_mat.T @ phi)
-    objective = cp.Minimize(w1 * data_term + w2 * coupling)
 
     EPS = 1e-6
-    cons = []
+    cons    = []
+    P_list  = []
     for i in range(N_JOINTS):
         idx = i * N_PARAMS
         m             = phi[idx + 0]
@@ -576,20 +596,35 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
         cons.append(P >> EPS * np.eye(4))     # physical-consistency LMI
         cons.append(phi[idx + 10] >= 0)       # Fv ≥ 0
         cons.append(phi[idx + 11] >= 0)       # Fc ≥ 0
+        P_list.append(P)
 
     for link_idx, sign in _MCY_SIGN_CONSTRAINTS:
         cons.append(sign * phi[link_idx * N_PARAMS + 2] >= 1e-5)
 
+    obj_expr = w1 * data_term + w2 * coupling
+    if entropic_gamma > 0:
+        # Bounded log-det (Bregman) divergence to a GENERIC isotropic reference
+        # P0 = diag(ref_inertia, ref_inertia, ref_inertia, ref_mass) — same blob
+        # for every link, NOT the CAD model. tr(P0⁻¹·P) bounds masses from above
+        # (the part pure −log det P lacked); −log det P lifts them off zero.
+        P0_inv = np.array([1.0 / ref_inertia] * 3 + [1.0 / ref_mass])
+        div = cp.sum([cp.sum(cp.multiply(P0_inv, cp.diag(P))) - cp.log_det(P)
+                      for P in P_list])
+        obj_expr = obj_expr + entropic_gamma * div
+    objective = cp.Minimize(obj_expr)
+
     prob = cp.Problem(objective, cons)
     if verbose:
+        reg = (f", log-det div γ={entropic_gamma:g} → P0=diag({ref_inertia:g}·I₃,{ref_mass:g})"
+               if entropic_gamma > 0 else "")
         print(f"  Solving SDP ({N_JOINTS} 4×4 LMIs + {len(cons) - N_JOINTS} linear, "
-              f"{rank} base + {N_PARAMS_T} standard vars)...")
-    prob.solve()                               # default SDP-capable backend
+              f"{rank} base + {N_PARAMS_T} standard vars{reg})...")
+    prob.solve(**({} if solver is None else {"solver": solver}))
     if phi.value is None:
         raise RuntimeError(f"SDP did not solve (status={prob.status}).")
     if verbose:
-        solver = getattr(prob.solver_stats, "solver_name", "?")
-        print(f"  status: {prob.status} — cost: {prob.value:.3f} (solver: {solver})")
+        used = getattr(prob.solver_stats, "solver_name", "?")
+        print(f"  status: {prob.status} — cost: {prob.value:.3f} (solver: {used})")
     return np.asarray(phi.value).ravel()
 
 
@@ -599,7 +634,8 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
 
 def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
                        verbose=True, plot=True, method='trust-constr',
-                       w1=1.0, w2=5e-3):
+                       w1=1.0, w2=5e-3, entropic_gamma=0.0, solver=None,
+                       ref_mass=0.5, ref_inertia=1e-3):
     print("=" * 60)
     print(f"ViperX-300 SysID — Full feasibility (stride={stride})")
     print("=" * 60)
@@ -640,7 +676,9 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
         # --- Convex SDP solve (paper-faithful): single global optimum ---
         print(f"\n[5] Identifying — convex SDP via CVXPY...")
         phi_id = identify_sdp(W_base_norm, tau_norm, L_mat,
-                              w1=w1, w2=w2, verbose=verbose)
+                              w1=w1, w2=w2, verbose=verbose,
+                              entropic_gamma=entropic_gamma, solver=solver,
+                              ref_mass=ref_mass, ref_inertia=ref_inertia)
     else:
         # --- Stage 1: no I^c PD — anchors F0 and friction values ---
         print(f"\n[5a] Stage 1 — {method}, without I^c PD (anchors F0/friction)...")
@@ -683,7 +721,7 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
         psd_ok   = np.all(eigs_pseudo >= -1e-4)
         ic_pd_ok = eigs_ic.min() >= -1e-4          # paper eq. 16c: I^c ≻ 0
         tri_ok   = np.all(tri >= -1e-4)
-        fric_ok  = pl[10] >= 0 and pl[11] >= 0
+        fric_ok  = pl[10] >= -1e-4 and pl[11] >= -1e-4   # same slack as the PSD checks
         link_ok  = mass_ok and psd_ok and ic_pd_ok and tri_ok and fric_ok
         all_ok  &= link_ok
 
@@ -742,6 +780,22 @@ if __name__ == "__main__":
                         choices=["trust-constr", "SLSQP", "cvxpy"],
                         help="Optimizer: trust-constr / SLSQP (SciPy NLP) or "
                              "cvxpy (convex SDP, paper-faithful; needs `pip install cvxpy`)")
+    parser.add_argument("--entropic", type=float, default=0.0,
+                        help="Log-det (Bregman) divergence regulariser weight γ "
+                             "(cvxpy only; 0 = exact paper Eq. 16). >0 gives "
+                             "non-degenerate link masses for URDF export by pulling "
+                             "each pseudo-inertia toward a generic blob P0 — "
+                             "model-free, no CAD prior. Use the smallest γ that "
+                             "lifts masses off zero while REL stays ≈ baseline.")
+    parser.add_argument("--ref-mass", type=float, default=0.5,
+                        help="Generic reference link mass [kg] for the log-det "
+                             "divergence target P0 (same blob for every link).")
+    parser.add_argument("--ref-inertia", type=float, default=1e-3,
+                        help="Generic reference link inertia [kg·m²] for P0.")
+    parser.add_argument("--solver", default=None,
+                        help="Override CVXPY solver (e.g. CLARABEL, SCS). "
+                             "CLARABEL (interior-point) is more accurate near the "
+                             "feasibility margins than the default SCS.")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--force",   action="store_true",
                         help="Recompute even if an identical artifact already exists")
@@ -764,6 +818,10 @@ if __name__ == "__main__":
         "method": args.method,
         "w1":     args.w1,
         "w2":     args.w2,
+        "entropic":    args.entropic,
+        "solver":      args.solver,
+        "ref_mass":    args.ref_mass,
+        "ref_inertia": args.ref_inertia,
         # Effort→torque conversion (see EFFORT_SCALE). Recorded here so the
         # provenance sidecar and config hash capture the units; a change to the
         # torque constant or motor counts now yields a distinct artifact.
@@ -790,6 +848,8 @@ if __name__ == "__main__":
         fs=args.fs, fc_lpf=args.fc, stride=args.stride,
         plot=not args.no_plot, method=args.method,
         w1=args.w1, w2=args.w2,
+        entropic_gamma=args.entropic, solver=args.solver,
+        ref_mass=args.ref_mass, ref_inertia=args.ref_inertia,
     )
 
     npy_path, json_path = pipeline_artifacts.save_artifact(

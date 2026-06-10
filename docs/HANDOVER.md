@@ -1,59 +1,49 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-10 (end of session). **Phase:** identification (control
-deferred until a valid URDF exists).
+**Last updated:** 2026-06-10 (end of session). **Phase:** identification **COMPLETE**
+→ **control** (a validated, control-ready URDF now exists).
 
 This is the "where was I / what's next" anchor. For depth: `CHANGELOG.md` (dated
 log), `THESIS_NOTES.md` (discussion), `PAPER_SUMMARY.md` (the paper).
 
 ---
 
-## TL;DR — do this first tomorrow
+## TL;DR — identification is done; the model is delivered
 
-A convex SDP solver (`--method cvxpy`) was implemented but **not yet run**. Step 1
-is to install cvxpy and run it.
+**The validated, control-ready dynamic model:**
+- **URDF:** `outputs/urdf/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef__phi_to_urdf-v1-0__cfg-3ef0a00c.urdf`
+- **phi:**  `outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef.npy`
+- Recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --stride 1`
+- Feasible (`[ALL OK]`), REL 0.5997, and **beats `vx300s.urdf`** on torque
+  prediction: friction-fitted mean RMSE **0.822** vs 2.682 Nm (−69.3%), MAE
+  **0.386** vs 0.753. (Full numbers in the 2026-06-10 changelog "FINAL" entry.)
 
+**Next: start the control phase** (paper §4–5: robust law + ERG — see
+`docs/PAPER_SUMMARY.md` §10). `control/trq.py` already does torque→current.
+First two control-phase to-dos that also strengthen the identification chapter:
+1. **Held-out validation** — collect/identify on one run, validate on another
+   (current result is held-in). The single biggest credibility upgrade.
+2. (Optional) implement the paper's **Eq. 11 excitation trajectory** to push REL
+   from 0.59 toward the paper's 0.43 and actually identify the per-link inertias
+   (this run only identifies gravity `mc` + friction; inertias ≈ generic blob).
+
+*Why the identification settings, for the write-up:* `w2` is the paper's Eq. 16a
+coupling weight — strong (100) makes the per-link realisation reproduce the
+data-identified base parameters (so the gravity-critical first moments `mc` aren't
+pulled off by the prior); `--entropic γ` (our documented deviation) resolves the
+residual mass-scale non-uniqueness toward a generic blob `P0=diag(--ref-inertia·I₃,
+--ref-mass)` — a scale only, never the CAD inertials. Pure `−log det` is unbounded
+(it exploded masses to 8000 kg); the bounded log-det Bregman divergence is what
+works. Full derivation/justification in `THESIS_NOTES.md`.
+
+**To reproduce the model from scratch** (identification needs no ROS):
 ```bash
-# 1. install the SDP solver (identification does NOT need ROS/pinocchio)
-python3 -m pip install cvxpy
-python3 -c "import cvxpy as cp; print(cp.__version__, cp.installed_solvers())"   # want SCS and/or CLARABEL
-
-# 2. identify with the convex SDP
-python3 sysid_feasible.py data/traj_run_20260518_143818.csv --no-plot --stride 5 --method cvxpy
+python3 sysid_feasible.py data/traj_run_20260518_143818.csv --no-plot --stride 1 \
+  --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL
+python3 phi_to_urdf.py outputs/npy/<the npy it wrote>.npy
+source /opt/ros/humble/setup.bash                       # validation needs ROS
+python3 compare_urdf_performance.py --friction --urdf-b outputs/urdf/<the urdf>.urdf
 ```
-
-**Success = BOTH at once** (neither NLP solver managed this):
-- `[6] Final REL` mean ≈ **0.59** (matches the unconstrained baseline = good fit), and
-- `[8] … Overall: [ALL OK]` (feasible) with non-degenerate masses.
-
-Then export + validate (validation **needs ROS** for pinocchio):
-```bash
-# export phi -> URDF (note the 'Saved ->' path it prints)
-python3 phi_to_urdf.py outputs/npy/<the-cvxpy-npy-it-just-wrote>.npy
-
-# validate vs baseline (source ROS so the REAL pinocchio loads)
-source /opt/ros/humble/setup.bash
-python3 compare_urdf_performance.py --friction \
-  --urdf-a urdf/vx300s.urdf \
-  --urdf-b outputs/urdf/<the-cvxpy-urdf-it-just-wrote>.urdf
-```
-Goal: SDP model's RMSE should close on / beat the manufacturer baseline
-(friction-fitted MAE baseline ≈ 0.753 Nm).
-
----
-
-## Decision tree on the SDP result
-
-- **REL ≈ 0.59 AND feasible** → success. Re-run at `--stride 1` for the final
-  model (the SDP solve is fast regardless of stride; only the regressor build
-  scales). Then this becomes the validated URDF → unblocks the control phase.
-- **Feasible but REL still ~0.8** → the convex problem is being solved but the fit
-  is data-limited; pivot to **data/excitation** (see open question below).
-- **cvxpy has no SDP solver** → `python3 -m pip install clarabel` (or scs).
-- **Masses feasible but ugly/degenerate** → add the model-free entropic
-  (log-det pseudo-inertia) regulariser to `identify_sdp` — already noted as
-  "Phase 2" in `THESIS_NOTES.md`. Do NOT use a CAD prior (would make the thesis
-  circular — see below).
 
 ---
 
@@ -70,8 +60,15 @@ Goal: SDP model's RMSE should close on / beat the manufacturer baseline
 - Diagnosed: NLP solvers fail (trust-constr stalls; SLSQP fits but infeasible +
   mass collapse). Root cause = base-vs-standard **non-identifiability**, NOT poor
   excitation (base regressor cond ≈ 197 is fine).
-- Implemented the fix: **convex SDP** (`--method cvxpy`, `identify_sdp`) using the
-  pseudo-inertia LMI. ← needs running (TL;DR above).
+- Implemented + **ran + validated** the fix: **convex SDP** (`--method cvxpy`,
+  `identify_sdp`, pseudo-inertia LMI). REL 0.5921 = baseline, feasible, and it
+  **beats `vx300s.urdf`** on torque prediction (friction MAE 0.41 vs 0.75 Nm).
+- Standard masses collapse (degenerate realisation) → added the model-free
+  realisation selector: first tried pure `−log det` (unbounded → masses exploded
+  to 8000 kg), then the **bounded log-det Bregman divergence** `--entropic γ` to a
+  generic blob `P0` (`--ref-mass`/`--ref-inertia`), plus `--solver` and a
+  validation-only `phi_to_urdf --mass-floor`. ← next is to run `--entropic` with a
+  tuned γ for a control-ready URDF (TL;DR above).
 
 **Key constraint (thesis integrity):** no CAD/reference-model prior in
 identification — the thesis must show a model built *from data alone* for a

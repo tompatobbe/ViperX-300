@@ -140,6 +140,16 @@ def _j_origin_to_jcom(J_O, m, mc):
     return J_O - m * (np.dot(c, c) * np.eye(3) - np.outer(c, c))
 
 
+# Validation-only escape hatch: when an *unregularised* SDP solution has
+# collapsed (near-zero) link masses, set this > 0 to clamp the mass used as the
+# CoM/parallel-axis divisor. Such links also have near-zero first moment mc, so
+# clamping only the divisor preserves mc (= m·c) and J_O exactly — and those are
+# precisely what RNEA inverse-dynamics torque depends on. The emitted URDF is
+# therefore torque-faithful (good for sanity-validation) but its per-link masses
+# are NOT a physical realisation; use the entropic regulariser for a real URDF.
+_MASS_FLOOR = 0.0
+
+
 def _parse_link(phi, i):
     """
     Extract processed inertial parameters for link i from the full phi vector.
@@ -159,7 +169,10 @@ def _parse_link(phi, i):
     F0   = float(p[12])
 
     if abs(m) < 1e-9:
-        raise ValueError(f"Link {i+1}: near-zero mass m={m:.2e} — phi may be invalid")
+        if _MASS_FLOOR > 0.0:
+            m = _MASS_FLOOR        # clamp divisor only; mc & J_O preserved → torque-faithful
+        else:
+            raise ValueError(f"Link {i+1}: near-zero mass m={m:.2e} — phi may be invalid")
 
     c_com = mc / m
     J_com = _j_origin_to_jcom(J_O, m, mc)
@@ -368,7 +381,19 @@ def main():
                         help="Recompute even if an identical artifact already exists")
     parser.add_argument("--outputs-dir", default=None,
                         help="Override output root directory (default: outputs/)")
+    parser.add_argument("--mass-floor", type=float, default=0.0,
+                        help="Validation-only: clamp near-zero link masses to this "
+                             "value [kg] instead of erroring. Preserves mc & J_O "
+                             "(torque-faithful) but the URDF masses are NOT a "
+                             "physical realisation — use the entropic regulariser "
+                             "(sysid --entropic) for a real URDF.")
     args = parser.parse_args()
+
+    if args.mass_floor > 0.0:
+        global _MASS_FLOOR
+        _MASS_FLOOR = args.mass_floor
+        print(f"[mass-floor] near-zero masses clamped to {args.mass_floor:g} kg "
+              f"(torque-faithful; masses are not a physical realisation)")
 
     # Load phi
     phi = np.load(args.phi)
@@ -395,6 +420,7 @@ def main():
         "template":   str(args.template) if args.template else None,
         "link_names": list(args.link_names),
         "robot_name": args.robot_name,
+        "mass_floor": args.mass_floor,
     }
 
     # Cache-hit check.
