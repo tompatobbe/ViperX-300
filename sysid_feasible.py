@@ -513,6 +513,86 @@ def identify(W_base, tau_stacked, L_mat, phi0=None, w1=1.0, w2=5e-3,
     return result.x[rank:]   # return standard parameters phi
 
 
+def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True):
+    """
+    Convex SDP form of the paper's identification problem (eq. 16), solved with
+    CVXPY. This is the paper-faithful route (the paper uses YALMIP, i.e. an SDP
+    solver): the physical-consistency condition is the *linear matrix inequality*
+    that the 4×4 pseudo-inertia P_i(phi) is positive semidefinite (Wensing,
+    Kim & Slotine 2017 — paper ref [53]). That single LMI subsumes mass>0,
+    I^c ≻ 0 (16c) AND the triangle inequalities (16d–f). With convex constraints,
+    eq. 16 has a unique global optimum, so it avoids both NLP failure modes
+    (trust-constr stalling, SLSQP escaping feasibility).
+
+        min  w1·||W_base φ_b − τ||² + w2·||φ_b − Lᵀ φ||²
+        s.t. P_i(φ) ⪰ 0  ∀i           (physical consistency, 16b–f)
+             Fv_i ≥ 0, Fc_i ≥ 0  ∀i    (16g–h)
+             sign(m_i·y_i) constraints (16i)
+
+    No reference/CAD model is used — feasibility is resolved purely by physics,
+    so the method applies to a robot that has no pre-existing dynamic model.
+
+    The data term is rewritten via the Gram matrix (WᵀW, Wᵀτ) so the problem size
+    is independent of the number of samples.
+
+    Returns phi (N_PARAMS_T,) — standard parameters.
+    """
+    try:
+        import cvxpy as cp
+    except ImportError as e:
+        raise ImportError(
+            "method='cvxpy' needs cvxpy with an SDP-capable backend (SCS/Clarabel).\n"
+            "  Install with:  pip install cvxpy"
+        ) from e
+
+    rank = W_base.shape[1]
+    G = W_base.T @ W_base
+    G = 0.5 * (G + G.T)                       # symmetrise against float drift
+    b = W_base.T @ tau_stacked
+    const = float(tau_stacked @ tau_stacked)
+
+    phi_b = cp.Variable(rank)
+    phi   = cp.Variable(N_PARAMS_T)
+
+    data_term = cp.quad_form(phi_b, cp.psd_wrap(G)) - 2.0 * (b @ phi_b) + const
+    coupling  = cp.sum_squares(phi_b - L_mat.T @ phi)
+    objective = cp.Minimize(w1 * data_term + w2 * coupling)
+
+    EPS = 1e-6
+    cons = []
+    for i in range(N_JOINTS):
+        idx = i * N_PARAMS
+        m             = phi[idx + 0]
+        mcx, mcy, mcz = phi[idx + 1], phi[idx + 2], phi[idx + 3]
+        Jxx, Jxy, Jxz = phi[idx + 4], phi[idx + 5], phi[idx + 6]
+        Jyy, Jyz, Jzz = phi[idx + 7], phi[idx + 8], phi[idx + 9]
+        # 4×4 pseudo-inertia — must match pseudo_inertia(); affine & symmetric.
+        P = cp.bmat([
+            [(Jyy + Jzz - Jxx) / 2, -Jxy,                  -Jxz,                  mcx],
+            [-Jxy,                  (Jxx + Jzz - Jyy) / 2,  -Jyz,                  mcy],
+            [-Jxz,                  -Jyz,                   (Jxx + Jyy - Jzz) / 2, mcz],
+            [mcx,                    mcy,                    mcz,                  m  ],
+        ])
+        cons.append(P >> EPS * np.eye(4))     # physical-consistency LMI
+        cons.append(phi[idx + 10] >= 0)       # Fv ≥ 0
+        cons.append(phi[idx + 11] >= 0)       # Fc ≥ 0
+
+    for link_idx, sign in _MCY_SIGN_CONSTRAINTS:
+        cons.append(sign * phi[link_idx * N_PARAMS + 2] >= 1e-5)
+
+    prob = cp.Problem(objective, cons)
+    if verbose:
+        print(f"  Solving SDP ({N_JOINTS} 4×4 LMIs + {len(cons) - N_JOINTS} linear, "
+              f"{rank} base + {N_PARAMS_T} standard vars)...")
+    prob.solve()                               # default SDP-capable backend
+    if phi.value is None:
+        raise RuntimeError(f"SDP did not solve (status={prob.status}).")
+    if verbose:
+        solver = getattr(prob.solver_stats, "solver_name", "?")
+        print(f"  status: {prob.status} — cost: {prob.value:.3f} (solver: {solver})")
+    return np.asarray(phi.value).ravel()
+
+
 # =============================================================================
 # 8. Full pipeline
 # =============================================================================
@@ -556,25 +636,31 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
 
     W_base_norm = W_norm[:, base_cols]
 
-    # --- Stage 1: no I^c PD — anchors F0 and friction values ---
-    print(f"\n[5a] Stage 1 — {method}, without I^c PD (anchors F0/friction)...")
-    phi_s1 = identify(W_base_norm, tau_norm, L_mat, phi0=initial_phi_guess(),
-                      verbose=verbose, method=method, w1=w1, w2=w2,
-                      with_ic_pd=False)
+    if method == 'cvxpy':
+        # --- Convex SDP solve (paper-faithful): single global optimum ---
+        print(f"\n[5] Identifying — convex SDP via CVXPY...")
+        phi_id = identify_sdp(W_base_norm, tau_norm, L_mat,
+                              w1=w1, w2=w2, verbose=verbose)
+    else:
+        # --- Stage 1: no I^c PD — anchors F0 and friction values ---
+        print(f"\n[5a] Stage 1 — {method}, without I^c PD (anchors F0/friction)...")
+        phi_s1 = identify(W_base_norm, tau_norm, L_mat, phi0=initial_phi_guess(),
+                          verbose=verbose, method=method, w1=w1, w2=w2,
+                          with_ic_pd=False)
 
-    tau_pred_s1 = (W_rows @ phi_s1).reshape(N, N_JOINTS)
-    rel_s1 = rel_metric(tau_meas, tau_pred_s1)
-    print(f"    Stage 1 REL: {rel_s1.round(4)}  mean={rel_s1.mean():.4f}")
+        tau_pred_s1 = (W_rows @ phi_s1).reshape(N, N_JOINTS)
+        rel_s1 = rel_metric(tau_meas, tau_pred_s1)
+        print(f"    Stage 1 REL: {rel_s1.round(4)}  mean={rel_s1.mean():.4f}")
 
-    # --- Stage 2: add I^c PD, warm-started from Stage 1 ---
-    print(f"\n[5b] Stage 2 — {method}, +I^c PD, warm-started from Stage 1...")
-    phi_id = identify(W_base_norm, tau_norm, L_mat, phi0=phi_s1,
-                      verbose=verbose, method=method, w1=w1, w2=w2,
-                      with_ic_pd=True)
+        # --- Stage 2: add I^c PD, warm-started from Stage 1 ---
+        print(f"\n[5b] Stage 2 — {method}, +I^c PD, warm-started from Stage 1...")
+        phi_id = identify(W_base_norm, tau_norm, L_mat, phi0=phi_s1,
+                          verbose=verbose, method=method, w1=w1, w2=w2,
+                          with_ic_pd=True)
 
     tau_pred_id = (W_rows @ phi_id).reshape(N, N_JOINTS)
     rel_id = rel_metric(tau_meas, tau_pred_id)
-    print(f"\n[6] Stage 2 REL: {rel_id.round(4)}  mean={rel_id.mean():.4f}")
+    print(f"\n[6] Final REL: {rel_id.round(4)}  mean={rel_id.mean():.4f}")
 
     print("\n[7] Identified friction parameters:")
     print(f"{'Joint':<14} {'Fv':>10} {'Fc':>10} {'F0':>10}")
@@ -653,8 +739,9 @@ if __name__ == "__main__":
     parser.add_argument("--w1",      type=float, default=1.0,    help="Data-fit weight")
     parser.add_argument("--w2",      type=float, default=5e-3,   help="Coupling weight")
     parser.add_argument("--method",  default="trust-constr",
-                        choices=["trust-constr", "SLSQP"],
-                        help="Optimizer: trust-constr (default, robust) or SLSQP")
+                        choices=["trust-constr", "SLSQP", "cvxpy"],
+                        help="Optimizer: trust-constr / SLSQP (SciPy NLP) or "
+                             "cvxpy (convex SDP, paper-faithful; needs `pip install cvxpy`)")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--force",   action="store_true",
                         help="Recompute even if an identical artifact already exists")

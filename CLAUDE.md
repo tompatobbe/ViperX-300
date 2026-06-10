@@ -83,19 +83,40 @@ python3 compare_urdf_performance.py --urdf-b urdf/<candidate>.urdf \
 
 Dependencies: `numpy scipy matplotlib pandas` + `pinocchio` (sim/validation).
 
+**Pinocchio / ROS gotcha (important).** The validation (`compare_urdf_performance.py`)
+and `sim/` need the *real* Pinocchio (3.9.0, with `buildModelFromUrdf` / URDF
+support), which is provided by **ROS 2 Humble**. Source it first:
+```bash
+source /opt/ros/humble/setup.bash
+```
+Without ROS sourced, `import pinocchio` resolves to a **bogus `~/.local`
+`pinocchio 0.4.3`** (an unrelated PyPI name-squat) and fails with
+`AttributeError: ... has no attribute 'buildModelFromUrdf'`. Recommended:
+`python3 -m pip uninstall pinocchio` to remove the junk package. Note that
+`sysid_feasible.py` does **not** use Pinocchio (own Newton–Euler regressor), so
+identification runs fine without ROS — only validation/sim need it.
+
 ## Documentation rule (important)
 
-This repo keeps a thesis-facing engineering log at **`docs/CHANGELOG.md`**.
+This repo keeps thesis-facing docs under `docs/`:
+- **`docs/CHANGELOG.md`** — chronological engineering log: *what changed, when*.
+- **`docs/THESIS_NOTES.md`** — discussion material organised by topic: design
+  decisions, **deviations from the source paper** and their justification,
+  trade-offs, and open questions an examiner might raise.
+- **`docs/PAPER_SUMMARY.md`** — condensed reference of the source paper.
 
-**Whenever you make a substantive change, add an entry** using the template at
-the bottom of that file. "Substantive" = anything that changes results,
-methodology, units/constants, model structure, or that an examiner might ask
-about. Each entry must state the **motivation, the change, the evidence/
-justification, and the impact (what must be re-run)**. Skip trivial edits
-(typos, formatting, comments).
+**Whenever you make a substantive change, add a `CHANGELOG.md` entry** using the
+template at the bottom of that file. "Substantive" = anything that changes
+results, methodology, units/constants, model structure, or that an examiner might
+ask about. Each entry must state the **motivation, the change, the evidence/
+justification, and the impact (what must be re-run)**. Skip trivial edits.
 
-When in doubt, write the entry — the changelog is meant to become raw material
-for the dissertation's implementation chapter.
+**When a decision involves a methodological choice or a divergence from the
+paper** (solver, model structure, constants, what we implement vs skip), also add
+or update a topic entry in **`docs/THESIS_NOTES.md`** — that file is the raw
+material for the dissertation's Methodology/Discussion chapters.
+
+When in doubt, write it down — these docs are meant to become dissertation text.
 
 ## Working style here
 
@@ -105,4 +126,21 @@ for the dissertation's implementation chapter.
   (examiners) will read.
 - Flag assumptions explicitly rather than guessing silently (e.g. motor counts,
   torque constants).
+
+## Who runs what (important)
+
+**The pipeline scripts are run by the user, not by Claude.** This includes
+identification (`sysid_feasible.py`), URDF export (`phi_to_urdf.py`), validation
+(`compare_urdf_performance.py`), and anything else long-running or hardware-
+facing (`control/`, `collect_*`, `run_trajectories*`). The user wants to watch
+their progress live, so:
+
+- **Do not launch these yourself** (no foreground, no background jobs). Instead,
+  **give the exact command(s) to copy-paste**, note the relevant flags, and say
+  what output to expect and what to send back.
+- Claude *may* run quick, read-only analysis/sanity-check snippets (e.g. loading
+  a CSV to print magnitudes, inspecting a URDF, regressions) — anything short and
+  non-mutating. When in doubt, hand the command to the user.
+- After the user runs a script and shares the result, Claude interprets it and
+  proposes the next command.
 ```

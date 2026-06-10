@@ -9,6 +9,116 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-10 — Re-identified with corrected units (v1.4): result & diagnosis
+
+**Area:** identification result (`sysid_feasible.py` v1.4) · validation.
+
+### What
+Re-ran identification on `data/traj_run_20260518_143818.csv` with the corrected
+mA→Nm units (same config as the prior v1.1/v1.2 runs: `fs=50, fc=10, stride=1,
+trust-constr, w1=1, w2=5e-3`). Artifact:
+`outputs/.../traj_run_20260518_143818__sysid_feasible-v1-4__cfg-f8c3b062.{npy,urdf}`.
+
+### Evidence (RNEA torque-prediction vs measured, all with correct units)
+| Model | rigid-body mean RMSE | friction-fitted mean MAE |
+|---|---|---|
+| old v1-1 (mis-scaled units) | 14.73 Nm | 8.75 Nm |
+| **new v1-4 (correct units)** | 4.49 Nm | **0.708 Nm** |
+| manufacturer `vx300s` | 3.03 Nm | 0.753 Nm |
+
+- Identified masses now physical: `[0.80, 0.80, 0.51, 0.30, 0.21, 0.11] kg`;
+  all feasibility constraints (mass>0, I^c PD, triangle ineq., mass-moment signs)
+  pass.
+- v1-4 **beats the manufacturer URDF on mean MAE** (0.708 vs 0.753 Nm) — already
+  competitive on typical error.
+
+### Open problem — optimizer non-convergence
+Both identification stages stopped with *"maximum number of function evaluations
+exceeded"*; final constrained REL (mean **0.822**) is **worse than the
+unconstrained least-squares baseline (0.590)** and far from the paper's ~0.43.
+Symptom in validation: v1-4's RMSE (4.49) > baseline (3.03) despite better MAE —
+i.e. large `q̈`-driven torque spikes (waist RMSE 6.7 Nm against a ±0.73 Nm real
+signal). Interpretation: gravity/friction parameters are well-identified (→ good
+MAE), but **inertia parameters are poorly determined** because `trust-constr`
+with 2-point FD constraint Jacobians on a 242k-row, 136-variable problem exhausts
+its evaluation budget after few real iterations (`delta_grad == 0.0` warning =
+quadratic data term confusing the quasi-Newton Hessian).
+
+### Next
+Solver-convergence experiments (smaller problem via `--stride`, `SLSQP`, possibly
+raising `maxiter` / zeroing the data-term Hessian). Target: constrained REL ≤ the
+0.59 unconstrained value, closing the inertia-driven RMSE gap to baseline.
+
+---
+
+## 2026-06-10 — Added convex SDP solver (`--method cvxpy`, paper-faithful)
+
+**Area:** `sysid_feasible.py` — new `identify_sdp()` + `run_identification`
+branch + `--method cvxpy`. Requires `pip install cvxpy`.
+
+### Motivation
+Both SciPy NLP solvers fail on the non-convex reformulation (trust-constr stalls
+feasible-but-poor; SLSQP fits but goes infeasible / collapses masses). The
+paper's problem (Eq. 16) is actually a **convex SDP** — solving it as such gives
+a feasible *and* optimal solution.
+
+### Change
+`identify_sdp()` formulates Eq. 16 in CVXPY: convex quadratic objective (data
+term via the Gram matrix `WᵀW`, so size is independent of #samples) subject to
+the **pseudo-inertia LMI** `P_i(phi) ⪰ 0` per link — a single constraint that
+subsumes mass>0, `I^c ≻ 0` (16c) and the triangle inequalities (16d–f), per
+Wensing et al. [53] — plus `Fv,Fc ≥ 0` and the mass-moment sign constraints
+(16i). `trust-constr`/`SLSQP` paths are unchanged; `method` is part of the
+config hash so SDP runs get distinct artifact names.
+
+### Justification / honesty
+No CAD/reference-model prior is used — feasibility is resolved by physics alone,
+so the method remains valid for a robot with no pre-existing model (the thesis
+premise). See `THESIS_NOTES.md` "Solver…" for the full argument and the
+base-vs-standard representation nuance.
+
+### Impact / to run
+`pip install cvxpy`, then
+`python3 sysid_feasible.py data/<run>.csv --no-plot --stride 5 --method cvxpy`.
+Expected: `[8]` feasibility `ALL OK` *and* REL near the 0.59 unconstrained
+baseline (i.e. both fixes at once). Then export + validate as usual.
+
+---
+
+## 2026-06-10 — SLSQP vs trust-constr; non-identifiability is the real blocker
+
+**Area:** identification solver (`sysid_feasible.py`) · diagnosis.
+
+### What
+Re-ran identification with `--stride 5 --method SLSQP` to test the
+solver-convergence hypothesis. SLSQP reached the data-optimal fit but produced a
+physically degenerate, **infeasible** model.
+
+### Evidence
+| run | REL (mean) | feasibility | masses [kg] |
+|---|---|---|---|
+| unconstrained lstsq | 0.591 | n/a | n/a |
+| trust-constr v1-4 (`cfg-f8c3b062`) | 0.822 | ALL OK | [.80,.80,.51,.30,.21,.11] |
+| SLSQP v1-4 (`cfg-5e871841`) | 0.602 | Links 2,5,6 FAIL | [.80,.81,.33,.02,.0004,.003] |
+
+Conditioning check (column-normalised base regressor, stride-20 subsample):
+**numeric rank 58/78 with a clean singular-value cliff; cond over the
+identifiable subspace ≈ 197** (good). The `waist`/`shoulder` mass columns are
+exactly zero (those masses are non-identifiable).
+
+### Conclusion
+Excitation/conditioning of the **base parameters** is fine — *not* the
+bottleneck. The blocker is the classic **base-vs-standard non-identifiability**:
+only the 58 base combinations are determined by data, so the per-link masses /
+inertias are free, and a fit-chasing solver (SLSQP, weak `w2` coupling) collapses
+the distal masses to ~0 and slips infeasible. trust-constr stays feasible but
+stalls. The paper's SDP/YALMIP solver gets both feasible *and* optimal because
+the LMI feasibility set is convex. → Best usable model remains **trust-constr
+v1-4**; the fix is better regularisation of the standard parameters and/or a
+convex (CVXPY/SDP) solver. See `THESIS_NOTES.md` "Solver…".
+
+---
+
 ## 2026-06-10 — Added paper summary; noted paper-vs-code discrepancies
 
 **Area:** documentation (`docs/PAPER_SUMMARY.md`, `Paper.txt`, `CLAUDE.md`).
