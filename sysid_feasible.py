@@ -31,7 +31,7 @@ import os
 import pipeline_artifacts
 
 PIPELINE_NAME    = "sysid_feasible"
-PIPELINE_VERSION = "1.3"   # bump whenever the algorithm changes
+PIPELINE_VERSION = "1.4"   # 1.4: effort columns are mA; τ = (mA/1000)·2.409·motors (was wrongly %-of-stall)
 
 # =============================================================================
 # 1. DH kinematics  (unchanged from sysid_fast.py)
@@ -231,8 +231,19 @@ def find_base_parameters(W_stacked, tol=1e-10):
 # 4. Data loading + filtering  (unchanged)
 # =============================================================================
 
-STALL_TORQUE = np.array([4.1, 10.6, 10.6, 4.1, 4.1, 4.1])
-EFFORT_SCALE = STALL_TORQUE / 100.0
+# Effort→torque conversion.
+# The `*_effort` columns are the Dynamixel "present current" reported by the
+# interbotix driver, in milliamps (mA), for a single (master) motor. Motor
+# torque is proportional to current:  τ = k_t · I  (k_t = 2.409 Nm/A for the
+# XM540-W270, gearbox included — see control/trq.py).
+#   τ[Nm] = (effort[mA] / 1000) · k_t · (motors on that joint)
+# The shoulder and elbow are dual-motor joints (a master + a mirrored shadow
+# motor); the driver reports only the master's current, so their joint torque
+# is twice the per-motor torque. This 2× on the shoulder was confirmed
+# empirically by regressing raw effort against the URDF gravity torque.
+TORQUE_CONSTANT  = 2.409                              # Nm/A  (XM540-W270, geared)
+MOTORS_PER_JOINT = np.array([1, 2, 2, 1, 1, 1])       # waist, shoulder, elbow, forearm_roll, wrist_angle, wrist_rotate
+EFFORT_SCALE     = (TORQUE_CONSTANT / 1000.0) * MOTORS_PER_JOINT   # mA → Nm
 ARM_JOINTS   = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 
 
@@ -666,6 +677,11 @@ if __name__ == "__main__":
         "method": args.method,
         "w1":     args.w1,
         "w2":     args.w2,
+        # Effort→torque conversion (see EFFORT_SCALE). Recorded here so the
+        # provenance sidecar and config hash capture the units; a change to the
+        # torque constant or motor counts now yields a distinct artifact.
+        "torque_constant":  TORQUE_CONSTANT,
+        "motors_per_joint": MOTORS_PER_JOINT.tolist(),
     }
 
     # Cache-hit check: skip expensive computation if the artifact already exists.

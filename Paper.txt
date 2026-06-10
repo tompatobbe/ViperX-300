@@ -1,0 +1,2123 @@
+Physically feasible dynamic model identification and constrained control of
+robotic arms: A case study on the ViperX-300 6-DoF robotic manipulator✩
+Mu’taz A. Momani, Mehdi Hosseinzadeh ∗
+School of Mechanical and Materials Engineering, Washington State University, Pullman, WA 99164, USA
+A R T I C L E I N F O
+Keywords:
+Modeling robotic arms
+Physical feasibility
+Closed-loop identification
+Constrained control
+Small manipulators
+Explicit reference governor
+A B S T R A C T
+The demand for novel robotic applications continues to grow, driven by the need for advanced solutions to
+complex tasks. These tasks often require the incorporation of dynamic models into the development of control
+schemes. Consequently, model identification has become a critical step in creating accurate dynamic models
+for robotic arms. However, the identification process can yield parameters that lack physical significance,
+resulting in feasibility issues that lead to unrealistic and potentially unstable dynamic models. This challenge is
+particularly pronounced in small robotic arms, where the dynamics are highly sensitive to parameter variations.
+To address these challenges, this article presents a systematic and comprehensive approach to the model
+identification of robotic arms while strictly enforcing physical feasibility. The proposed approach is validated
+on the ViperX-300 6DoF robotic manipulator, which lacks a pre-existing dynamic model, making it an ideal
+candidate for testing our method. To further validate the proposed model identification approach and assess the
+suitability of the obtained model for the ViperX-300 6DoF robotic manipulator in safety-critical applications,
+we design an explicit reference governor, which is a model-based constrained control strategy. Experimental
+results show that the identified model achieves sufficient accuracy for safety-critical applications, showcasing
+the effectiveness of the proposed model identification approach and the reliability of the identified model for
+the ViperX-300 6DoF robotic manipulator.
+1. Introduction
+Robotic arms, also known as robotic manipulators, are increasingly
+employed across various industries to perform tasks requiring high
+precision and performance, such as arc welding, machining, packaging,
+assembly, laser welding, and laser cutting. Achieving the required
+performance for these applications necessitates advanced control techniques, which often rely on an accurate understanding of the robot’s
+dynamic behavior. However, many robot manufacturers either do not
+provide a complete dynamic model or offer only limited details about
+certain parameters and aspects. Consequently, dynamic modeling of
+robotic arms has become a critical research focus in the robotics field,
+as highlighted in studies such as [1–5].
+Dynamic modeling of robotic arms entails understanding the underlying relationship between joint motion and the forces or torques
+applied to each joint. A common approach to model this relationship
+is to use supervised learning techniques, such as linear regression,
+which can be viewed as both a statistical and machine learning method
+depending on the context. In this approach, the robot’s dynamic model
+is identified using data on joint positions, velocities, accelerations, and
+✩ This paper was recommended for publication by Associate Editor Toru Namerikawa.
+∗ Corresponding author.
+E-mail addresses: mutaz.momani@wsu.edu (M.A. Momani), mehdi.hosseinzadeh@wsu.edu (M. Hosseinzadeh).
+actuator forces or torques [6–8]. While this process can be performed
+in either an open-loop or closed-loop manner, practitioners typically
+prefer the closed-loop approach [9,10]. In the closed-loop approach,
+a controller is employed to regulate joint parameters, enabling the
+enforcement of output and operational constraints, which enhances
+safety and reliability during the identification process.
+Despite its effectiveness, dynamic models identified through regression techniques often face challenges related to physical infeasibility, as
+demonstrated in [11–14]. Specifically, such models may lack physical
+consistency or fail to adhere to fundamental laws of physics, such
+as the conservation of energy or accurate representation of inertial
+properties. For example, parameters like mass, inertia, or damping
+may take unrealistic or nonsensical values, resulting in models that are
+not physically valid. This limitation can significantly compromise the
+accuracy, reliability, and safety of control systems, especially in safetycritical applications. Addressing this issue requires the integration of
+additional constraints or regularization techniques during the identification process to ensure the model satisfies the underlying physical
+principles of the robotic system [15,16]. This task becomes even more
+https://doi.org/10.1016/j.mechatronics.2025.103419
+Received 4 July 2025; Received in revised form 9 September 2025; Accepted 30 September 2025
+Mechatronics 112 (2025) 103419
+Available online 7 October 2025
+0957-4158/© 2025 The Author(s). Published by Elsevier Ltd. This is an open access article under the CC BY-NC license (http://creativecommons.org/licenses/bync/4.0/).
+M.A. Momani and M. Hosseinzadeh
+challenging for smaller robotic arms [17], where the range of applied
+forces or torques can vary significantly across different joints. Friction
+effects, in particular, introduce nonlinearities and uncertainties that are
+challenging to model accurately and compensate for, further complicating the process [18,19]. While this area is undoubtedly important, the
+existing literature lacks a structured, step-by-step approach, specifically
+for identifying models of small robotic arms.
+This paper is motivated by the limitations and challenges outlined
+above and aims to present a systematic and comprehensive procedure
+for the closed-loop identification of robotic arms, ensuring strict guarantees of physical feasibility. To guide readers through this procedure,
+we provide a step-by-step application on the ViperX-300 6DoF robotic
+manipulator [20]. To validate and evaluate the proposed procedure, we
+compare the identified model with actual robot data across two different trajectories. Additionally, following the recommendations of prior
+work [21–23], we evaluate the performance of the identified model
+by implementing a model-based constrained control scheme derived
+from it. For this purpose, we first design a robust control system and
+provide theoretical guarantees for stability and tracking convergence.
+This control law is structured to facilitate the design of the constrainthandling controller. Next, we employ the Explicit Reference Governor
+(ERG) [24–28], a model-based add-on unit that augments the control
+system with constraint-handling capabilities. Our experimental results
+and analysis indicate that the identified model is sufficiently accurate
+for tracking purposes and safety-critical applications, demonstrating the
+effectiveness of the proposed procedure and the reliability of the identified model for the ViperX-300 6DoF robotic manipulator. The resulting
+model is made available at [29] to facilitate its use by researchers in
+their studies involving the ViperX-300 6DoF robotic manipulator.
+The key contributions of this paper are as follows: (i) the presentation of a systematic, step-by-step approach for identifying physically
+feasible dynamic models of robotic arms, demonstrated through experimental validation on the ViperX-300 6-DoF manipulator, which
+currently lacks a reliable dynamic model; (ii) the development of a
+novel robust control system for robotic arms, along with a comprehensive analysis of its stability and tracking performance; and (iii) the
+development and experimental validation of an ERG for the constrained
+control of robotic arms subject to joint constraints. Note that the ERG
+scheme outlined in [30–32] for controlling robotic arms depends on
+explicit predictions of the robot trajectory, making it potentially impractical for real-time applications. Additionally, the efforts in [33,34]
+are confined to simulation studies, leaving their applicability to realworld robots questionable. To the best of our knowledge, this paper
+represents the first attempt to experimentally apply the ERG framework
+to ensure joint constraints in robotic arms without necessitating explicit
+predictions of the system’s trajectory.
+The rest of this paper is organized as follows. Section 2 presents
+the closed-loop identification method and discusses approaches to ensure the physical feasibility of the identified model. Section 3 applies
+the developed procedure step-by-step to the ViperX-300 6DoF robotic
+manipulator, reporting the obtained experimental results. In Section 4,
+an ERG-based control scheme is designed, and the experimental results
+from its application to the ViperX-300 6DoF robotic manipulator are
+reported. Finally, Section 5 concludes this paper.
+Notation: We denote the set of real numbers by R, the set of positive
+real numbers by R>0
+, and the set of non-negative real numbers by R≥0
+.
+Similarly, we use Z to denote the set of integer numbers, Z>0
+to denote
+the set of positive integer numbers, and Z≥0
+to denote the set of nonnegative integer numbers. We denote the transpose of matrix 𝐴 by 𝐴⊤.
+Also, 𝐴 ≻ 0 (𝐴 ⪰ 0) indicates that 𝐴 is positive definite (positive
+semi-definite). Given 𝑥 ∈ R𝑛
+, we defined ‖𝑥‖
+2 = 𝑥
+⊤𝑥. The notation
+diag{𝑎1
+, …, 𝑎𝑛
+} indicates a 𝑛×𝑛 diagonal matrix with elements 𝑎1
+, … , 𝑎𝑛
+on the main diagonal. Given a matrix 𝐴 ∈ R𝑛×𝑛
+, we denote its smallest
+and largest eigenvalues by 𝜆min(𝐴) and 𝜆max(𝐴), respectively. Also, ‖𝐴‖
+denotes the induced 2-norm (spectral norm) of the matrix 𝐴. We use
+cond(𝐴) to denote the condition number of the matrix 𝐴. Finally, 𝟎
+denotes the zero matrix with appropriate dimension.
+2. Closed-loop model identification
+This section discusses the dynamic model of robotic manipulators
+and outlines a detailed procedure for parameter identification.
+2.1. Dynamical model
+The dynamical model of a 𝑛-degree-of-freedom manipulator can be
+derived using Lagrangian or Newton-Euler approach [35,36], resulting
+in the generalized joint-space dynamics expressed by the following
+equation:
+𝜏 = 𝑀(𝑞) ̈𝑞 + 𝐶(𝑞, ̇𝑞) ̇𝑞 + 𝐺(𝑞) + 𝜏𝑓
+, (1)
+where 𝑞 = [𝑞1 ⋯ 𝑞𝑛
+]
+⊤ ∈ R𝑛
+, ̇𝑞 = [ ̇𝑞1 ⋯ ̇𝑞𝑛
+]
+⊤ ∈ R𝑛
+, and ̈𝑞 =
+[ ̈𝑞1 ⋯ ̈𝑞𝑛
+]
+⊤ ∈ R𝑛 are respectively vectors of joint angles, angular
+velocities, and angular accelerations, 𝑀(𝑞) ∈ R𝑛×𝑛
+(𝑀(𝑞) ≻ 0) is the
+mass matrix, 𝐶(𝑞, ̇𝑞) ∈ R𝑛×𝑛
+is the Coriolis matrix, 𝐺(𝑞) ∈ R𝑛
+is the
+gravitational torque vector, 𝜏 = [𝜏1 ⋯ 𝜏𝑛
+]
+⊤ ∈ R𝑛
+is the vector of torques
+applied to joints, and 𝜏𝑓 = [𝜏𝑓 1 ⋯ 𝜏𝑓 𝑛
+]
+⊤ ∈ R𝑛
+is the vector of torques
+caused by friction.
+In general, the friction torque 𝜏𝑓 𝑖
+, ∀𝑖 is governed by a complex
+nonlinear model. However, a simplified model [37] that includes both
+viscous and Coulomb friction can be described by:
+𝜏𝑓 𝑖
+= 𝜏
+𝑣
+𝑓 𝑖
++ 𝜏
+𝑐
+𝑓 𝑖
+, (2)
+where 𝜏
+𝑣
+𝑓 𝑖
+∈ R is the torque due to the viscous friction, and 𝜏
+𝑐
+𝑓 𝑖
+∈ R is
+the torque due to the Coulomb friction. The viscous friction 𝜏
+𝑣
+𝑓 𝑖
+can be
+computed as:
+𝜏
+𝑣
+𝑓 𝑖
+= ̇𝑞𝑖
+⋅ 𝐹
+𝑣
+𝑖
+, (3)
+where 𝐹
+𝑣
+𝑖
+∈ R≥0
+is the viscous friction coefficient for the 𝑖th joint. Also,
+the Coulomb friction 𝜏
+𝑐
+𝑓 𝑖
+is:
+𝜏
+𝑐
+𝑓 𝑖
+= sign( ̇𝑞𝑖
+) ⋅ 𝐹
+𝑐
+𝑖
+, (4)
+where 𝐹
+𝑐
+𝑖
+∈ R≥0
+is the Coulomb friction coefficient for the 𝑖th joint.
+2.2. Regression model
+In this section, we employ a regression-based method to explicitly
+identify the 𝑀, 𝐶, and 𝐺 matrices in Eq. (1), ensuring physical interpretability and enabling direct integration into model-based control,
+stability analysis, and adaptive schemes. These methods are computationally efficient, transparent, and well-suited for applications where a
+structured model is required, though they can be sensitive to noise and
+necessitate sufficiently rich system excitation for accurate parameter
+estimation. In contrast, physics-informed neural networks (PINNs) [38–
+41] embed physical laws into a neural network framework, providing
+flexibility, strong generalization to unseen conditions, and inherent
+enforcement of physical consistency without explicit matrix formulations. However, PINNs typically produce black-box representations
+rather than structured dynamics, complicating integration into classical
+control frameworks.
+As discussed in [42–44], model (1) can be expressed as the following
+regression model:
+𝜏 = 𝜙(𝑞, ̇𝑞, ̈𝑞)𝜗, (5)
+where 𝜙(𝑞, ̇𝑞, ̈𝑞) ∈ R𝑛×13𝑛
+is the regression matrix, and 𝜗 ∈ R13𝑛
+is
+the vector of standard parameters to be identified. This means that
+for each link, thirteen parameters must be identified: ten dynamic
+parameters, including its mass, first mass moments, and inertia tensor
+relative to the link frame; along with the viscous and Coulomb friction
+coefficients. Additionally, the motor torque offset is included as an
+identifiable parameter [45]. These offsets model the torque required
+to initiate motion from rest, as well as any constant offsets that persist
+Mechatronics 112 (2025) 103419
+2
+M.A. Momani and M. Hosseinzadeh
+even when dynamic terms such as inertia, Coriolis, Gravity, or friction
+are negligible.
+Note that some parameters in 𝜗 are ‘‘redundant’’ in the sense that
+the same dynamical model can be determined even if some parameters
+take different values. This means that it is not possible to uniquely
+identify all parameters by considering joint motion and torque data.
+Also, some parameters in 𝜗 have no impact on the manipulator’s
+dynamics. To address these issues, we will use the so-called base
+parameters [46–48], which construct the minimum set of parameters
+whose values can be identified from the manipulator’s motion and
+torque data and can determine the manipulator’s dynamics uniquely.
+This approach removes parameters with no influence and eliminates
+linear dependencies in the regressor matrix, ensuring it is full rank
+and enabling reliable least-squares estimation. Specifically, we rewrite
+model (5) in the following form:
+𝜏 = 𝜙𝑏
+(𝑞, ̇𝑞, ̈𝑞)𝜗𝑏
+, (6)
+where 𝜙𝑏
+(𝑞, ̇𝑞, ̈𝑞) ∈ R𝑛×𝑝
+is the reduced regression matrix, and 𝜗𝑏 ∈ R𝑝
+represents the vector of base parameters, with 𝑝 being the number of
+non-redundant and identifiable parameters. The base parameters can be
+determined by systematically regrouping standard parameters through
+linear relations, following the step-by-step approach outlined in [47].
+2.3. Excitation trajectory
+According to model (6), one possible approach to identify the base
+parameters 𝜗𝑏
+is to determine excitation trajectories for all joints and
+use a controller to track those trajectories. This approach, known as
+closed-loop identification [9], is advantageous because it allows us to
+enforce spatial constraints, and velocity and acceleration limits.
+Inspired by [49], we consider the following structure for the
+excitation trajectory of the 𝑖th joint:
+𝑞
+𝑒𝑥𝑐
+𝑖
+(𝑡) = 𝑞0,𝑖 +
+∑𝑁𝑖
+𝑗=1
+1
+𝑗2𝜋𝛥𝑓
+(
+𝑎𝑖,𝑗 ⋅ sin(𝑗2𝜋𝛥𝑓 𝑡)
+− 𝑏𝑖,𝑗 ⋅ cos(𝑗2𝜋𝛥𝑓 𝑡)
+)
+, (7)
+where 𝑞0,𝑖 is an offset value for 𝑖th joint, 𝛥𝑓 is the fundamental frequency, 𝑎𝑖,𝑗 and 𝑏𝑖,𝑗 are coefficients, and 𝑁𝑖
+is the number of frequency
+harmonics for the 𝑖th joint. Remark 1 will address how to determine
+the parameters 𝑞0,𝑖, 𝑎𝑖,𝑗, and 𝑏𝑖,𝑗.
+2.4. Data collection and identification
+Suppose that we collect 𝑇 samples of the torque 𝜏, joint angles 𝑞,
+velocities ̇𝑞, and accelerations ̈𝑞 by measuring them at time instants
+𝑡1
+, 𝑡2
+, … , 𝑡𝑇
+. Thus, from (6), we have:
+ = 𝛷𝑏𝜗𝑏
+, (8)
+where
+ =
+⎡
+⎢
+⎢
+⎢
+⎢
+⎣
+𝜏(𝑡1
+)
+𝜏(𝑡2
+)
+⋮
+𝜏(𝑡𝑇
+)
+⎤
+⎥
+⎥
+⎥
+⎥
+⎦
+, 𝛷𝑏 =
+⎡
+⎢
+⎢
+⎢
+⎢
+⎣
+𝜙𝑏
+(𝑞(𝑡1
+), ̇𝑞(𝑡1
+), ̈𝑞(𝑡1
+))
+𝜙𝑏
+(𝑞(𝑡2
+), ̇𝑞(𝑡2
+), ̈𝑞(𝑡2
+))
+⋮
+𝜙𝑏
+(𝑞(𝑡𝑇
+), ̇𝑞(𝑡𝑇
+), ̈𝑞(𝑡𝑇
+))
+⎤
+⎥
+⎥
+⎥
+⎥
+⎦
+. (9)
+Once  and 𝛷𝑏 are constructed, we can use the linear regression
+techniques (see, e.g., [50]) to identify the base parameters 𝜗𝑏
+. For
+instance, we can use the least squares technique to identify 𝜗𝑏 as
+follows:
+𝜗
+∗
+𝑏
+= arg min
+𝜗𝑏∈R𝑝
+‖ − 𝛷𝑏𝜗𝑏‖
+2
+. (10)
+Remark 1. The solution of the optimization problem (10) is 𝜗
+∗
+𝑏
+=
+(
+𝛷⊤
+𝑏
+𝛷𝑏
+)−1 𝛷⊤
+𝑏
+ . Thus, to avoid numerical issues, it is desired to select
+the parameters 𝑞0,𝑖, 𝑎𝑖,𝑗, and 𝑏𝑖,𝑗 such that the condition number of the
+matrix 𝛷𝑏
+is minimized. In mathematical terms, the parameters 𝑞0,𝑖,
+𝑎𝑖,𝑗, and 𝑏𝑖,𝑗 can be determined by solving the following optimization
+problem:
+𝑞
+∗
+0,𝑖, 𝑎∗
+𝑖,𝑗, 𝑏∗
+𝑖,𝑗, ∀𝑖, 𝑗 = arg min
+𝑞0,𝑖,𝑎𝑖,𝑗,𝑏𝑖,𝑗, ∀𝑖,𝑗
+cond(𝛷𝑏
+) (11a)
+subject to
+𝑞𝑖,min ≤ 𝑞𝑖 ≤ 𝑞𝑖,max, ∀𝑖 (11b)
+̇𝑞𝑖,min ≤ ̇𝑞𝑖 ≤ ̇𝑞𝑖,max, ∀𝑖 (11c)
+̈𝑞𝑖,min ≤ ̈𝑞𝑖 ≤ ̈𝑞𝑖,max, ∀𝑖, (11d)
+where 𝑞𝑖,min and 𝑞𝑖,max are the lower and upper limits of the 𝑖th joint
+angle, ̇𝑞𝑖,min and ̇𝑞𝑖,max are the lower and upper limits of the 𝑖th joint
+velocity, and ̈𝑞𝑖,min and ̈𝑞𝑖,max are the lower and upper limits of the 𝑖th
+joint acceleration.
+2.5. Physical feasibility
+The solution obtained from solving the optimization problem (10)
+may not be physically feasible [11,15]. For instance, the resulting
+mass matrix 𝑀(𝑞) may not be positive definite, indicating that the
+kinetic energy could potentially be non-positive. To prevent physically
+infeasible solutions, the feasible set of the optimization problem (10)
+should be properly constrained, which will be discussed next.
+The total kinetic energy for the 𝑖th link can be computed as:
+𝐾𝑖 =
+1
+2
+𝑚𝑖𝑣
+𝑐⊤
+𝑖
+𝑣
+𝑐
+𝑖
++
+1
+2
+𝜔
+⊤
+𝑖
+𝐼
+𝑐
+𝑖
+𝜔𝑖
+, (12)
+where 𝑚𝑖
+is the mass of the 𝑖th link, 𝑣
+𝑐
+𝑖
+∈ R3
+is the velocity of the
+center of mass of the 𝑖th link, 𝐼
+𝑐
+𝑖
+∈ R3×3 is the inertia tensor of the 𝑖th
+link about its center of mass, and 𝜔𝑖
+is the angular velocity of the 𝑖th
+link in its own frame. Thus, to ensure that the kinetic energy of the 𝑖th
+link is always non-negative, we must have 𝑚𝑖 > 0 and 𝐼
+𝑐
+𝑖
+≻ 0.
+Note that the inertia tensor about the center of mass 𝐼
+𝑐
+𝑖
+can be
+related to the inertia tensor about the link frame, which is denoted by
+𝐽𝑖
+, by using the parallel-axis theorem [51,52], as follows:
+𝐽𝑖 = 𝐼
+𝑐
+𝑖
++ 𝑚𝑖
+⋅ (𝐶𝑖
+)
+⊤(𝐶𝑖
+), (13)
+where 𝐶𝑖 = [𝑋𝑖 𝑌𝑖 𝑍𝑖
+]
+⊤ ∈ R3
+is the vector of X, Y, Z positions of the
+center of mass of the 𝑖th link with respect to the link frame, (𝐶𝑖
+) is
+the skew symmetric matrix associated with the position vector 𝐶𝑖
+, and
+𝐽𝑖
+is:
+𝐽𝑖 =
+⎡
+⎢
+⎢
+⎣
+𝐽
+𝑥𝑥
+𝑖
+𝐽
+𝑥𝑦
+𝑖
+𝐽
+𝑥𝑧
+𝑖
+𝐽
+𝑥𝑦
+𝑖
+𝐽
+𝑦𝑦
+𝑖
+𝐽
+𝑦𝑧
+𝑖
+𝐽
+𝑥𝑧
+𝑖
+𝐽
+𝑦𝑧
+𝑖
+𝐽
+𝑧𝑧
+𝑖
+⎤
+⎥
+⎥
+⎦
+, (14)
+with 𝐽
+𝑥𝑥
+𝑖
+, 𝐽
+𝑥𝑦
+𝑖
+, 𝐽
+𝑥𝑧
+𝑖
+, 𝐽
+𝑦𝑦
+𝑖
+, 𝐽
+𝑦𝑧
+𝑖
+, and 𝐽
+𝑧𝑧
+𝑖
+being the inertia parameters. Thus,
+instead of imposing a constraint on 𝐼
+𝑐
+𝑖
+, one could impose a constraint
+on 𝐽𝑖
+in the form 𝐽𝑖 − 𝑚𝑖
+⋅ (𝐶𝑖
+)
+⊤(𝐶𝑖
+) ≻ 0.
+Furthermore, to ensure full physical feasibility of the identified
+inertial parameters—particularly that the inertia tensor 𝐼
+𝑐
+𝑖
+corresponds
+to a realizable mass distribution—it is necessary to enforce the triangle
+inequality constraints on its principal moments of inertia [16,53].
+These principal moments, denoted here by 𝜆𝑖,1
+, 𝜆𝑖,2
+, and 𝜆𝑖,3
+, are the
+eigenvalues of 𝐼
+𝑐
+𝑖
+. Enforcing only 𝑚𝑖 > 0 and 𝐼
+𝑐
+𝑖
+≻ 0 guarantees
+physical semi-consistency, meaning that the inertia tensor is positive
+definite and the kinetic energy remains non-negative, but it does not
+ensure realizability. This is because the principal moments of inertia
+are not independent: they must satisfy geometric relationships that
+reflect feasible mass distributions in three-dimensional space. If these
+relationships—expressed by the triangle inequalities—are violated, the
+inertia values would correspond to an unrealizable rigid body, for
+example by implying an unphysical imbalance in resistance to rotation
+about one axis. Explicitly, the following conditions are required:
+𝜆𝑖,1 + 𝜆𝑖,2 ≥ 𝜆𝑖,3
+, 𝜆𝑖,2 + 𝜆𝑖,3 ≥ 𝜆𝑖,1
+, 𝜆𝑖,1 + 𝜆𝑖,3 ≥ 𝜆𝑖,2
+. (15)
+Mechatronics 112 (2025) 103419
+3
+M.A. Momani and M. Hosseinzadeh
+In addition to the above-mentioned feasibility constraints, friction
+coefficients 𝐹
+𝑣
+𝑖
+and 𝐹
+𝑐
+𝑖 must be non-negative. Furthermore, depending
+on the position of the center of mass relative to the link frame, the
+first mass moments of the 𝑖th link (i.e., 𝑚𝑖𝑋𝑖
+, 𝑚𝑖𝑌𝑖
+, and 𝑚𝑖𝑍𝑖
+) must be
+constrained properly (see Section 3.4 for implementing constraints on
+the first mass moments).
+Note that the optimization problem (10) addresses the base parameters 𝜗𝑏
+, while the constraints mentioned earlier are expressed in terms
+of the standard parameters within the vector 𝜗. Taking inspiration
+from [14], we propose the following optimization problem to identify
+the base parameters 𝜗𝑏
+, ensuring that the resulting model is physically
+feasible:
+𝜗
+∗
+𝑏
+= arg min
+𝜗𝑏
+,𝜗
+𝑤1
+‖
+‖
+ − 𝛷𝑏𝜗𝑏
+‖
+‖
+2
++ 𝑤2
+‖
+‖
+𝜗𝑏 − 𝐿 ⋅ 𝜗‖
+‖
+2
+, (16a)
+subject to
+𝑚𝑖 > 0, ∀𝑖, (16b)
+𝐽𝑖 − 𝑚𝑖
+⋅ (𝐶𝑖
+)
+⊤(𝐶𝑖
+) ≻ 0, ∀𝑖, (16c)
+𝜆𝑖,1 + 𝜆𝑖,2 ≥ 𝜆𝑖,3
+, ∀𝑖, (16d)
+𝜆𝑖,2 + 𝜆𝑖,3 ≥ 𝜆𝑖,1
+, ∀𝑖, (16e)
+𝜆𝑖,1 + 𝜆𝑖,3 ≥ 𝜆𝑖,2
+, ∀𝑖, (16f)
+𝐹
+𝑣
+𝑖
+≥ 0, ∀𝑖, (16g)
+𝐹
+𝑐
+𝑖
+≥ 0, ∀𝑖, (16h)
+Constraints on 𝑚𝑖𝑋𝑖
+, 𝑚𝑖𝑌𝑖
+, and 𝑚𝑖𝑍𝑖
+, ∀𝑖, (16i)
+where 𝐿 ∈ R𝑝×13𝑛 describes the linear dependency between the vector
+of standard parameters 𝜗 and the vector of base parameters 𝜗𝑏
+, and
+𝑤1 and 𝑤2 are weighting parameters. It is noteworthy that the second
+term in the cost function (16a) allows us to enforce constraints that
+are originally expressed in the standard parameters within 𝜗; however,
+as discussed above, it is not possible to uniquely identify the standard
+parameters by observing joint and torque data.
+Remark 2. It is important to note that the positive definiteness of the
+mass matrix 𝑀(𝑞) was not enforced explicitly as a constraint in the
+optimization problem (16). Enforcing this property during optimization
+would require gridding the entire joint configuration space at a fine
+resolution, evaluating 𝑀(𝑞) at each grid point, and imposing a positive
+definiteness constraint for each evaluated matrix. This process would
+result in an extremely large number of constraints, significantly increasing the computational burden and making the optimization intractable
+for a 6-DoF manipulator. Even then, full physical consistency of the
+system would still not be guaranteed.
+Remark 3. While the optimization problem in (16) remains tractable
+for the 6-DoF robotic arm considered in this study, we acknowledge
+that the computational complexity of enforcing physical feasibility constraints can increase substantially for higher-DoF systems. Several prior
+works [15,53] have investigated methods to address this challenge.
+Although scalability is not the primary focus of this article, future work
+will explore strategies to enhance the efficiency and applicability of the
+proposed identification method for high-DoF robotic platforms.
+3. Case study—ViperX-300 6DoF robotic manipulator
+This section considers the ViperX-300 6DoF robotic manipulator
+(see Fig. 1-left) from Trossen Robotics [20] as the case study, and follow
+the procedure outlined in Section 2 to identify its dynamical model
+in the form of (1). The ViperX-300 6DoF robotic manipulator is an
+open-chain serial manipulator with all revolute joints, offering high
+maneuverability with its six degrees of freedom. It can be operated via
+Robot Operating System 2 (ROS2) [54], which enhances its capabilities
+for communication, control, and integration with other robotic systems.
+Fig. 1. Left: ViperX-300 6DoF manipulator. Right: frame assignments and
+reference configuration.
+Table 1
+D-H parameters of the ViperX-300 6DoF.
+Joint 𝛼𝑖−1 𝑎𝑖−1 𝑑𝑖
+𝜃𝑖
+1 0 0 𝐿1
+𝑞1
+2
+3𝜋
+2
+0 0 𝑞2 − 0.437𝜋
+3 0 𝐿2 0 𝑞3 − 0.063𝜋
+4
+3𝜋
+2
+0 𝐿3 + 𝐿4
+𝑞4
+5
+𝜋
+2
+0 0 𝑞5
+6
+3𝜋
+2
+0 0 𝑞6
+Fig. 1-right shows the base coordinate frame as well as the coordinate
+frames for all the links. Also, the Denavit–Hartenberg (D-H) parameters
+(i.e., 𝛼𝑖−1, 𝑎𝑖−1, 𝑑𝑖
+, and 𝜃𝑖
+, 𝑖 ∈ {1, … , 6}) of the manipulator are given in
+Table 1, where 𝐿1 = 0.12675 [m], 𝐿2 = 0.30594 [m], 𝐿3 = 0.1964 [m],
+𝐿4 = 0.10362 [m], 𝐿5 = 0.07 [m], 𝐿6 = 0.13658 [m] are the lengths
+of the links. Note that for safety reasons, the ranges of joint angles are
+limited [20] as 𝑞1 ∈ [−𝜋, 𝜋], 𝑞2 ∈ [−0.56𝜋, 0.56𝜋], 𝑞3 ∈ [−0.56𝜋, 0.51𝜋],
+𝑞4 ∈ [−𝜋, 𝜋], 𝑞5 ∈ [−0.59𝜋, 0.72𝜋], and 𝑞6 ∈ [−𝜋, 𝜋].
+To control the joint angles of the ViperX-300 6DoF manipulator,
+its operation is set to ‘‘position control mode’’ using the ROS service
+call /vx300s/set_operating_modes. It is important to note that,
+despite the name, this mode internally employs a Proportional-IntegralDerivative (PID) controller to regulate the joint motions. This control
+mode enables the manipulator to track the desired joint angles, continuously published via /vx300s/commands/joint_group topic. We
+subscribe to the /vx300s/joint_states topic to obtain real-time
+data on joint angles, angular velocities, and applied torques.
+3.1. Dynamical model
+We employ the Lagrangian approach to develop the dynamic model
+of the ViperX-300 6DoF manipulator, which involves calculating the
+potential and kinetic energies for each link. The kinetic energy 𝐾 is the
+sum of the kinetic energies of the individual links 𝐾𝑖
+, as given by (12).
+Similarly, the potential energy 𝑈 is the sum of the potential energies
+of the individual links 𝑈𝑖 which can be computed as:
+𝑈𝑖 = 𝑚𝑖
+𝑔
+⊤
+0
+𝑂
+𝑐
+𝑖
+, (17)
+where 𝑚𝑖
+is the mass of the 𝑖th link, 𝑂
+𝑐
+𝑖
+∈ R3
+is the position of the center
+of mass of 𝑖th link with respect to the base frame, and 𝑔0 ∈ R3
+is the
+gravity vector.
+Once the kinetic and potential energies are calculated, the torque
+equation for each joint can be derived using the following formulations:
+𝜏𝑖 =
+𝑑
+𝑑𝑡 (
+𝜕𝐾
+𝜕 ̇𝑞𝑖
+)
+−
+𝜕𝐾
+𝜕𝑞𝑖
++
+𝜕𝑈
+𝜕𝑞𝑖
++ 𝜏
+𝑣
+𝑓 𝑖
++ 𝜏
+𝑐
+𝑓 𝑖
+, (18)
+which results in a dynamical model in the form of (1). The matrices
+𝑀(𝑞), 𝐶(𝑞, ̇𝑞), and 𝐺(𝑞) computed for the ViperX-300 6DoF robotic
+manipulator can be found as MATLAB and Python files in [29].
+Mechatronics 112 (2025) 103419
+4
+M.A. Momani and M. Hosseinzadeh
+Table 2
+Velocity and acceleration limits for each joint.
+Joint ̇𝑞min ̇𝑞max ̈𝑞min ̈𝑞max
+[rad/s] [rad/s] [rad/s2
+] [rad/s2
+]
+Joint 1 −3.38 3.38 −277.24 277.24
+Joint 2 −1.58 3.36 −186.03 348.99
+Joint 3 −2.97 3.36 −298.10 298.10
+Joint 4 −3.36 3.36 −290.83 290.83
+Joint 5 −3.02 3.43 −407.16 407.16
+Joint 6 −4.80 4.79 −510.06 510.06
+Fig. 2. One cycle of the excitation trajectories for all joints.
+3.2. Excitation trajectory
+To obtain the excitation trajectory, we consider the structure given
+in (7), and compute its velocity and acceleration analytically. In designing the excitation trajectories, the choice of the frequency range
+[𝜔𝑓
+, 𝑁𝑖𝜔𝑓
+], where 𝜔𝑓 = 2𝜋𝛥𝑓, reflects an inherent trade-off. A lower
+𝜔𝑓
+(i.e., a longer excitation period) enables broader coverage of the
+robot workspace for a given maximum joint velocity, thereby increasing
+the information content of the collected data and improving parameter
+estimation accuracy. Conversely, incorporating higher frequencies in
+[𝜔𝑓
+, 𝑁𝑖𝜔𝑓
+] leads to greater joint accelerations, which are beneficial
+for accurately identifying inertial parameters. However, the upper
+frequency limit must remain below the lowest structural resonance
+frequency of the manipulator to avoid exciting unmodeled flexible dynamics [2]. We set 𝛥𝑓 = 0.1 and 𝑁𝑖 = 5 for all 𝑖. While our experimental
+results indicate that this frequency range is sufficient for accurate parameter identification of the manipulator, a detailed sensitivity analysis
+of 𝛥𝑓 and 𝑁𝑖
+is left for future work. We set 𝑇 = 180, 000 and construct
+the matrix 𝛷𝑏 by collecting samples at a frequency of 200 [Hz]. We use
+the procedure detailed in Remark 1 to compute the parameters 𝑞0,𝑖, 𝑎𝑖,𝑗,
+and 𝑏𝑖,𝑗, ∀𝑖, 𝑗, where the joint angle limits are described above, and the
+joint velocities and accelerations are constrained as specified in Table 2.
+These limits were established through extensive experimental analysis
+to ensure safe and feasible operation within the manipulator’s physical
+capabilities. To solve the resulting nonlinear optimization problem, we
+employ the MATLAB fmincon function with the active-set algorithm,
+which is suitable for nonlinear problems with bound and nonlinear
+trajectory constraints. The resulting excitation trajectories for all joints
+are presented in Fig. 2.
+3.3. Data collection
+To identify the manipulator parameters, training data is collected
+on applied torques, joint positions, velocities, and accelerations. While
+the robot’s sensors directly measure positions and velocities, accelerations are not directly measured. Thus, to generate the training data,
+acceleration is first derived from velocity measurements using the Euler
+method (i.e., the first-order forward difference approximation), and the
+resulting signal is then processed with a zero-phase filtering technique
+using a low-pass filter with a cutoff frequency of 10 Hz. This zerophase filtering can be implemented in MATLAB using the filtfilt
+function.
+3.4. Identification
+Once the data on joint angles and applied torques is collected, we
+use the optimization problem (16) to identify the base parameters.
+Note that, according to the frames shown in Fig. 1, constraint (16i)
+is implemented as 𝑚2𝑋2 > 0, 𝑚3𝑌3 > 0, 𝑚4𝑍4 < 0, 𝑚5𝑌5 > 0,
+and 𝑚6𝑍6 > 0. Moreover, because the torque ranges differ across the
+various joints of the manipulator, the data was normalized to ensure
+consistency and to prevent any single joint from disproportionately
+influencing the identification process. At each time instant, the torque
+vector in (9) contains six entries, one corresponding to each joint.
+For normalization, the torque sample of each joint, along with the
+associated row of the regression matrix in (9), was scaled by the
+maximum absolute torque observed for that joint over all samples.
+This joint-wise normalization ensures consistent scaling across all joints
+while preserving the underlying physical relationships in the data.
+We use the YALMIP toolbox [55] to solve the resulting optimization
+problem. The obtained base parameters are reported in Table 3, where
+𝐹
+0
+𝑖
+, 𝑖 ∈ {1,… , 6} represents the motor torque offset for the 𝑖th joint.
+3.5. Feasibility check
+Since constraints on mass, first mass moments, friction coefficients,
+and inertia matrices are explicitly enforced within the optimization
+problem (16), ensuring physical feasibility reduces to verifying the
+positive definiteness of the mass matrix 𝑀(𝑞) across the entire operating range defined by the joint angle and velocity limits. To this end,
+the operating range of each joint angle was discretized in one-degree
+increments, and the corresponding mass matrix 𝑀(𝑞) was evaluated at
+each point. In all cases, 𝑀(𝑞) remained positive definite, confirming
+that the kinetic energy is non-negative throughout the operating range.
+These results rigorously demonstrate that the identified dynamic model
+is physically feasible.
+3.6. Model validation
+This subsection focuses on experimentally validating the obtained
+model by analyzing the manipulator’s behavior under two different
+trajectories.
+The left column of Fig. 3 presents the measured torques from the
+excitation trajectory along with the predicted actuator torques based
+on the obtained model for the excitation trajectory depicted in Fig. 2,
+while the right column shows the difference between these values. To
+quantify this comparison, we employ the Relative Error Lenient (REL
+)
+index,1 defined as:
+REL =
+1
+𝑁
+∑𝑁
+𝑖=1
+|
+|
+|
+𝜏actual(𝑡
+𝑖
+) − 𝜏predicted(𝑡
+𝑖
+)
+|
+|
+|
+max(
+|
+|
+𝜏actual(𝑡
+𝑖
+)
+|
+|
+,
+|
+|
+|
+𝜏predicted(𝑡
+𝑖
+)
+|
+|
+|
+)
+, (19)
+where 𝑁 is the total number of samples, 𝑡
+𝑖
+is the 𝑖th sampling instant,
+and 𝜏actual(𝑡
+𝑖
+) and 𝜏predicted(𝑡
+𝑖
+) are the measured torque and the predicted
+torque for the 𝑖th sample, respectively.
+1 We are motivated to use the Relative Error Lenient index due to its
+effectiveness in analyzing systems like robotic manipulators, where both high
+and low values can occur [56,57]. This index helps maintain a balanced
+perspective on performance, which is critical in such contexts.
+Mechatronics 112 (2025) 103419
+5
+M.A. Momani and M. Hosseinzadeh
+Table 3
+Identified base parameters for the ViperX-300 6DoF manipulator.
+Base parameter Value Base parameter Value
+𝐽
+𝑥𝑥
+6
+− 𝐽
+𝑦𝑦
+6
+0.2154 [kg m2
+] 𝐽
+𝑥𝑦
+6
+−2.87 × 10−2 [kg m2
+]
+𝐽
+𝑥𝑧
+6
+1.03 × 10−3 [kg m2
+] 𝐽
+𝑦𝑧
+6
+7.36 × 10−2 [kg m2
+]
+𝐽
+𝑧𝑧
+6
+1.12 [kg m2
+] 𝑚6𝑋6 2.05 × 10−4 [kg m]
+𝑚6𝑌6 −1.54 × 10−4 [kg m] 𝐽
+𝑥𝑥
+5
++ 𝐽
+𝑦𝑦
+6
+− 𝐽
+𝑦𝑦
+5
+1.16 [kg m2
+]
+𝐽
+𝑥𝑦
+5
+3.49 × 10−4 [kg m2
+] 𝐽
+𝑥𝑧
+5
+−5.82 × 10−2 [kg m2
+]
+𝐽
+𝑦𝑧
+5
+5.38 × 10−2 [kg m2
+] 𝐽
+𝑧𝑧
+5
++ 𝐽
+𝑦𝑦
+6
+2.09 [kg m2
+]
+𝑚5𝑋5 2.50 × 10−3 [kg m] 𝑚5𝑌5 + 𝑚6𝑍6 2.92 × 10−2 [kg m]
+𝐽
+𝑥𝑥
+4
++ 𝐽
+𝑦𝑦
+5
+− 𝐽
+𝑦𝑦
+4
+0.767 [kg m2
+] 𝐽
+𝑥𝑦
+4
+−0.252 [kg m2
+]
+𝐽
+𝑥𝑧
+4
+3.82 × 10−2 [kg m2
+] 𝐽
+𝑦𝑧
+4
+4.33 × 10−2 [kg m2
+]
+𝐽
+𝑧𝑧
+4
++ 𝐽
+𝑦𝑦
+5
+1.81 [kg m2
+] 𝑚4𝑋4 7.37 × 10−3 [kg m]
+𝑚4𝑌4 − 𝑚5𝑍5 8.08 × 10−3 [kg m] 𝐽
+𝑥𝑥
+3
++ 𝐽
+𝑦𝑦
+4
++ 2(𝐿3 + 𝐿4
+)𝑚4𝑍4 − 𝐽
+𝑦𝑦
+3
+1.59 × 10−2 [kg m2
+]
++(𝐿3 + 𝐿4
+)
+2
+(𝑚4 + 𝑚5 + 𝑚6
+)
+𝐽
+𝑥𝑦
+3
+−1.53 × 10−2 [kg m2
+] 𝐽
+𝑥𝑧
+3
+−0.339 [kg m2
+]
+𝐽
+𝑦𝑧
+3
+−4.05 × 10−2 [kg m2
+] 𝐽
+𝑧𝑧
+3
++ 𝐽
+𝑦𝑦
+4
++ 2(𝐿3 + 𝐿4
+)𝑚4𝑍4 2.52 [kg m2
+]
++(𝐿3 + 𝐿4
+)
+2
+(𝑚4 + 𝑚5 + 𝑚6
+)
+𝑚3𝑋3 1.44 × 10−2 [kg m] 𝑚3𝑌3 + 𝑚4𝑍4 2.35 × 10−2 [kg m]
++(𝐿3 + 𝐿4
+)(𝑚4 + 𝑚5 + 𝑚6
+)
+𝐽
+𝑥𝑥
+2
+− 𝐽
+𝑦𝑦
+2
+3.02 × 10−2 [kg m2
+] 𝐽
+𝑥𝑦
+2
+6.38 × 10−2 [kg m2
+]
+−𝐿
+2
+2
+(𝑚3 + 𝑚4 + 𝑚5 + 𝑚6
+)
+𝐽
+𝑥𝑧
+2
+− 𝐿2𝑚3𝑍3 0.113 [kg m2
+] 𝐽
+𝑦𝑧
+2
+8.59 × 10−2 [kg m2
+]
+𝐽
+𝑧𝑧
+2
++ 𝐿
+2
+2
+(𝑚3 + 𝑚4 + 𝑚5 + 𝑚6
+) 1.67 [kg m2
+] 𝑚2𝑋2 0.153 [kg m]
++𝐿2
+(𝑚3 + 𝑚4 + 𝑚5 + 𝑚6
+)
+𝑚2𝑌2
+2.06 × 10−2 [kg m] 𝐽
+𝑧𝑧
+1
++ 𝐽
+𝑦𝑦
+2
++ 𝐽
+𝑦𝑦
+3
+3.84 [kg m2
+]
++𝐿
+2
+2
+(𝑚3 + 𝑚4 + 𝑚5 + 𝑚6
+)
+𝐹
+𝑣
+1
+0.126 [N m s∕rad] 𝐹
+𝑐
+1
+0.239 [N m]
+𝐹
+𝑣
+2
+0.101 [N m s∕rad] 𝐹
+𝑐
+2
+0.412 [N m]
+𝐹
+𝑣
+3
+4.03 × 10−2 [N m s∕rad] 𝐹
+𝑐
+3
+0.261 [N m]
+𝐹
+𝑣
+4
+2.34 × 10−2 [N m s∕rad] 𝐹
+𝑐
+4
+3.03 × 10−2 [N m]
+𝐹
+𝑣
+5
+1.66 × 10−2 [N m s∕rad] 𝐹
+𝑐
+5
+6.08 × 10−2 [N m]
+𝐹
+𝑣
+6
+1.58 × 10−3 [N m s∕rad] 𝐹
+𝑐
+6
+2.95 × 10−3 [N m]
+𝐹
+0
+1
+−5.29 × 10−2 [N m] 𝐹
+0
+2
+−0.203 [N m]
+𝐹
+0
+3
+−0.766 [N m] 𝐹
+0
+4
+1.19 × 10−2 [N m]
+𝐹
+0
+5
+−1.27 × 10−2 [N m] 𝐹
+0
+6
+−4.69 × 10−3 [N m]
+The obtained REL values for each joint corresponding to the trajectory depicted in Fig. 2 are presented in Table 4. As shown in this
+table, the predicted values for joints 1, 2, 3, and 5 closely align with
+the actual measured values. However, the errors for joints 4 and 6 are
+slightly higher. This discrepancy can be attributed to the fact that these
+joints generate smaller torques compared to the other joints, making
+them more sensitive to noise and other uncertainties in the model and
+measurement data.
+To further analyze the nature of the modeling errors, Fig. 4 presents
+the empirical probability distributions of the torque prediction errors.
+These distributions were generated by overlaying fitted normal probability density functions on top of histograms of the error data. As shown
+in Fig. 4, all distributions are visually close to a normal distribution
+with zero mean. This observation suggests that the modeling errors are
+approximately Gaussian in nature, which is a desirable property for
+many model-based control and estimation frameworks.
+Similar to prior work [3,58], we generate a different trajectory (see
+Fig. 5) using the structure defined in (7) and setting 𝑁𝑖 = 3, ∀𝑖,
+providing adequate excitation richness for evaluating the model under
+dynamic conditions. The fundamental frequency is set to 𝛥𝑓 = 0.1 Hz to
+match the system bandwidth, ensuring safe and responsive actuation.
+The offsets 𝑞0,𝑖 and Fourier coefficients (𝑎𝑖,𝑗, 𝑏𝑖,𝑗) are tuned to span a
+representative region of the robot’s workspace while enforcing position,
+velocity, and acceleration constraints. Fig. 6 presents the measured
+Table 4
+Obtained Relative Errors Lenient (REL
+) on both excitation and validation
+trajectories.
+Joint Excitation Validation
+trajectory trajectory
+Joint 1 0.415 0.333
+Joint 2 0.226 0.168
+Joint 3 0.126 0.200
+Joint 4 0.646 0.540
+Joint 5 0.541 0.381
+Joint 6 0.637 0.731
+and predicted torques for this trajectory, while Table 4 reports the
+calculated REL values for each joint. The obtained values are consistent
+with those for the excitation trajectory shown in Fig. 2, demonstrating
+that the identified model performs well even for trajectories different
+from the excitation trajectory.
+4. Constrained control of the manipulator using the explicit
+reference governor
+As suggested by prior work [21–23], this section validates the
+identified model for the ViperX-300 6DoF robotic manipulator by evaluating the performance of a model-based constrained control scheme
+Mechatronics 112 (2025) 103419
+6
+M.A. Momani and M. Hosseinzadeh
+Fig. 3. Estimated torque comparison between measured torque (blue solid
+line) and the predicted torque (red solid line) for the excitation trajectory
+shown in Fig. 2.
+developed using the identified model. For this purpose, this section
+develops an Explicit Reference Governor (ERG) for the ViperX-300
+6DoF robotic manipulator. The ERG serves as an add-on unit to a
+pre-stabilized system, ensuring that both input and state constraints
+are satisfied throughout operation. By ‘‘pre-stabilized’’, we mean that
+for any constant desired joint angles, the corresponding equilibrium
+Fig. 4. Empirical probability distributions of torque prediction errors.
+Fig. 5. One cycle of the validation trajectories for all joints.
+point is asymptotically stable. Once the system is pre-stabilized, the
+ERG dynamically filters the reference signal as needed to ensure that
+constraints are satisfied at all times while the system converges to the
+desired configuration.
+Mechatronics 112 (2025) 103419
+7
+M.A. Momani and M. Hosseinzadeh
+Fig. 6. Estimated torque comparison between measured torque (blue solid
+line) and the predicted torque (red solid line) for the validation trajectory
+shown in Fig. 5.
+4.1. Pre-stabilization
+This subsection discusses the pre-stabilization of the ViperX-300
+6DoF robotic manipulator despite unavoidable model uncertainty. The
+following theorem presents a robust control law and provides analytical
+guarantees for its effectiveness.
+Theorem 1. Consider the robotic arm modeled as described in (1).
+Suppose that the following control law is employed to control the robot:
+𝜏 = −𝐾𝑝
+⋅ (𝑞 − 𝑞𝑣
+) − 𝐾𝑑
+⋅ ̇𝑞 + 𝐺̂(𝑞) + 𝐹̂ 𝑣
+⋅ ̇𝑞 + 𝐹̂ 0 + 𝜈( ̇𝑞), (20)
+where 𝐾𝑝 ∈ R6×6 (𝐾𝑝 ≻ 0) is the proportional gain, 𝐾𝑑 ∈ R6×6
+(𝐾𝑑 ≻ 0) is the derivative gain, 𝑞𝑣 = [𝑞𝑣1 ⋯ 𝑞𝑣6
+]
+⊤ ∈ R6
+is the
+vector of applied reference of joint angles, 𝐺̂(𝑞) ∈ R6
+is the identified
+gravitational torque vector, computed based on the identified parameters,
+𝐹̂ 𝑣 = diag{𝐹̂ 𝑣
+1
+, 𝐹̂ 𝑣
+2
+, 𝐹̂ 𝑣
+3
+, 𝐹̂ 𝑣
+4
+, 𝐹̂ 𝑣
+5
+, 𝐹̂ 𝑣
+6
+} ∈ R6×6 is the matrix of identified viscous
+friction coefficients, 𝐹̂ 0 = [𝐹̂ 0
+1 ⋯ 𝐹̂ 0
+6
+]
+⊤ ∈ R6
+is the vector of identified
+motors torque offsets. Also, 𝜈( ̇𝑞) ∈ R6
+is defined as:
+𝜈( ̇𝑞) = {
+−𝛽
+̇𝑞
+‖ ̇𝑞‖
+‖ ̇𝑞‖ ≠ 0
+𝟎 ‖ ̇𝑞‖ = 0
+, (21)
+where 𝛽 = diag{𝛽1
+, 𝛽2
+, 𝛽3
+, 𝛽4
+, 𝛽5
+, 𝛽6
+} ∈ R6×6 with 𝛽𝑖 ∈ R>0
+, ∀𝑖 (i.e., 𝛽 ≻ 0).
+Then, for sufficiently large values of 𝜆min(𝐾𝑑
+) and 𝜆min(𝛽), the joint angles
+asymptotically converge to 𝑞
+†
+, satisfying ‖
+‖
+‖
+𝑞
+† − 𝑞𝑣
+‖
+‖
+‖
+≤ 𝜎, for some 𝜎 ∈ R≥0
+.
+Proof. Consider the following Lyapunov function:
+𝑉
+(
+𝑞, ̇𝑞, 𝑞𝑣
+)
+=
+[
+𝑞 − 𝑞𝑣
+̇𝑞
+]⊤
+𝑃 (𝑞)
+[
+𝑞 − 𝑞𝑣
+̇𝑞
+]
+, (22)
+where
+𝑃 (𝑞) = 1
+2
+[
+𝐾𝑝 𝟎
+𝟎 𝑀(𝑞)
+]
+≻ 0. (23)
+Taking the time derivative of this Lyapunov function yields:
+𝑉̇ (⋅) = (𝑞 − 𝑞𝑣
+)
+⊤𝐾𝑝
+̇𝑞 + ̇𝑞
+⊤𝑀(𝑞) ̈𝑞 +
+1
+2
+̇𝑞
+⊤𝑀̇ (𝑞) ̇𝑞, (24)
+which, according to the dynamic model (1), the control law (20), and
+the fact that ̇𝑞
+⊤
+(
+𝑀̇ (𝑞) − 2𝐶(𝑞, ̇𝑞)
+)
+̇𝑞 = 0 [59], implies that2
+:
+𝑉̇ (⋅) = − ̇𝑞
+⊤𝐾𝑑
+̇𝑞 − ̇𝑞
+⊤𝐹̃ 𝑣
+̇𝑞 − ̇𝑞
+⊤𝐹
+𝑐
+sign( ̇𝑞) − ̇𝑞
+⊤𝐹̃ 0
+− ̇𝑞
+⊤𝐺̃(𝑞) − ̇𝑞
+⊤𝛽 ̇𝑞
+‖ ̇𝑞‖
+,
+≤ − ̇𝑞
+⊤
+(
+𝜆min(𝐾𝑑
+) − ‖
+‖𝐹̃ 𝑣‖
+‖
+)
+̇𝑞 + ‖ ̇𝑞‖
+(
+‖
+‖𝐺̃(𝑞)‖
+‖ +
+‖
+‖
+‖
+𝐹̃ 0‖
+‖
+‖
+− 𝜆min(𝐹
+𝑐
+) − 𝜆min(𝛽)
+)
+, (25)
+where 𝐹
+𝑐 = diag{𝐹
+𝑐
+1
+, … , 𝐹𝑐
+6
+} ∈ R6×6 is the diagonal matrix of Coulomb
+friction coefficients defined in (4), 𝐺̃(𝑞) ∶= 𝐺(𝑞) − 𝐺̂(𝑞), 𝐹̃ 𝑣 ∶= 𝐹
+𝑣 −
+𝐹̂ 𝑣
+, where 𝐹
+𝑣 = diag{𝐹
+𝑣
+1
+,… , 𝐹𝑣
+6
+} ∈ R6×6 is the diagonal matrix of
+viscous friction coefficients defined in (3), 𝐹̃ 0 ∶= 𝐹
+0 − 𝐹̂ 0
+, where
+𝐹
+0 = [𝐹
+0
+1 ⋯ 𝐹
+0
+6
+]
+⊤ ∈ R6
+is the vector of actual motor torque offsets,
+and sign( ̇𝑞) = [sign( ̇𝑞1
+) ⋯ sign( ̇𝑞6
+)]⊤ ∈ R6
+.
+If 𝜆min(𝛽) is sufficiently large, the second term on the right-hand side
+of (25) becomes negative, implying that:
+𝑉̇ (⋅) ≤ − ̇𝑞
+⊤
+(
+𝜆min(𝐾𝑑
+) − ‖
+‖𝐹̃ 𝑣‖
+‖
+)
+̇𝑞 (26)
+Thus, if 𝜆min(𝐾𝑑
+) is sufficiently large, we can conclude that 𝑉̇ (𝑞, ̇𝑞, 𝑞𝑣
+)
+is negative semi-definite. At this stage, we apply LaSalle’s invariance
+principle [60] to characterize the trajectory that satisfies 𝑉̇ (𝑞, ̇𝑞, 𝑞𝑣
+) ≡ 0.
+Suppose that 𝜆min(𝐾𝑑
+) is sufficiently large, which implies that there
+exist 𝑡
+†
+such that 𝑉̇ (𝑞, ̇𝑞, 𝑞𝑣
+) = 0 for 𝑡 ≥ 𝑡
+†
+. This implies that ̇𝑞 = ̈𝑞 = 𝟎
+for 𝑡 ≥ 𝑡
+†
+. Thus, according to the dynamic model (1) and the control
+law (20), and since sign(𝟎) = 𝟎, 𝑞 converges to its steady-state value,
+denoted by 𝑞
+†
+, which satisfies:
+𝐾𝑝
+⋅
+(
+𝑞
+† − 𝑞𝑣
+)
++ 𝐺̃
+(
+𝑞
+†
+)
++ 𝐹̃ 0 = 0
+⇒ 𝑞
+† − 𝑞𝑣 = −𝐾𝑝
+−1 (
+𝐺̃
+(
+𝑞
+†
+)
++ 𝐹̃ 0
+)
+, 𝑡 ≥ 𝑡
+†
+. (27)
+2 The term − ̇𝑞
+⊤𝐹
+𝑐
+sign( ̇𝑞) can be upper bounded as − ̇𝑞
+⊤𝐹
+𝑐
+sign( ̇𝑞) =
+−
+∑
+𝑖
+| ̇𝑞𝑖
+|𝐹
+𝑐
+𝑖 ≤ −
+∑
+𝑖 min{𝐹
+𝑐
+𝑖
+}| ̇𝑞𝑖
+|. Since 𝐹
+𝑐
+is a diagonal matrix (i.e., min{𝐹
+𝑐
+𝑖
+} =
+𝜆min(𝐹
+𝑐
+)) and ‖ ̇𝑞‖ ≤
+∑
+𝑖
+| ̇𝑞𝑖
+|, it follows that − ̇𝑞
+⊤𝐹
+𝑐
+sign( ̇𝑞) ≤ −𝜆min(𝐹
+𝑐
+)‖ ̇𝑞‖.
+Mechatronics 112 (2025) 103419
+8
+M.A. Momani and M. Hosseinzadeh
+Therefore, using the robust control law (20) to control the robotic
+arm ensures that the vector of joint angles asymptotically converges to
+𝑞
+†
+satisfying the following inequality:
+‖
+‖
+‖
+𝑞
+† − 𝑞𝑣
+‖
+‖
+‖
+≤
+1
+𝜆min(𝐾𝑝
+)
+‖
+‖
+‖
+𝐺̃(𝑞
+†
+) + 𝐹̃ 0‖
+‖
+‖
+, (28)
+which completes the proof by setting 𝜎 =
+1
+𝜆min(𝐾𝑝
+)
+‖
+‖
+‖
+𝐺̃(𝑞
+†
+) + 𝐹̃ 0‖
+‖
+‖
+. □
+Remark 4. It is important to note that we did not incorporate the
+identified Coulomb friction in the control law (20), as it includes the
+sign function, which can introduce undesired chattering. However, the
+term 𝜈( ̇𝑞) in (20) considers the entire vector of joint velocities, thereby
+avoiding any chattering.
+Remark 5. The matrices 𝐾𝑑 and 𝛽 are design parameters that can
+be freely chosen to satisfy the conditions established in the preceding
+proof. Similarly, 𝐾𝑝
+is also a tunable design parameter, and increasing
+its value can theoretically reduce the upper bound of the tracking
+error, as described in (28). However, in the presence of significant
+model identification errors, excessively large values of 𝐾𝑝
+, 𝐾𝑑
+, or 𝛽
+may result in actuator saturation, potentially degrading performance or
+causing instability. Remark 9 further investigates the influence of these
+parameters in the context of the identified model for the ViperX-300
+6-DoF manipulator.
+Remark 6. Although both the second term (i.e., −𝐾𝑑
+⋅ ̇𝑞) and the last
+term (i.e., 𝜈( ̇𝑞)) in (20) depend on the velocity ̇𝑞, they serve distinct
+purposes: the second term primarily introduces damping to improve
+stability, whereas the last term is designed to enhance robustness
+against model uncertainties.
+Remark 7. As discussed above, the matrix 𝛽 should satisfy 𝜆min(𝛽) ≥
+max{‖𝐹̃ 0‖ + ‖𝐺̃(𝑞)‖ − 𝜆min(𝐹
+𝑐
+), 0}. Since the exact values of these terms
+and the parameter estimation errors are generally unknown, a practical
+approach is to select 𝛽 to conservatively satisfy this inequality. In
+practice, one typically begins with a small initial value for 𝛽 and
+incrementally increases it until the desired tracking performance is
+achieved, ensuring both stability and robustness.
+We use the proposed robust control scheme to control the
+joints of the ViperX-300 6DoF robotic manipulator. The controller
+gains were selected using a practical, iterative tuning procedure:
+starting from small initial values, 𝐾𝑝 and 𝐾𝑑 were gradually
+increased to achieve accurate tracking and adequate damping,
+while 𝛽 was tuned conservatively as described in Remark 7 to
+ensure stability and robustness. Fig. 7 presents the experimental
+results, with 𝐾𝑝 = diag{11.78, 20.95, 20.95, 7.85, 6.55, 0.57},
+𝐾𝑑 = diag{0.52, 0.91, 0.52, 0.026, 0.13, 0.014}, and 𝛽 =
+diag{0.5, 0.5, 0.5, 0.1, 0.1, 0.1}. As shown in this figure, the control
+law presented in (20) effectively stabilizes the ViperX-300 6DoF
+robotic manipulator and steers its joint angles toward the desired
+values.
+Remark 8. The ViperX-300 6DoF does not natively support direct
+torque control. Instead, we compute the desired joint torques using the
+robust control law in (20) and map them to the robot’s current-control
+interface. Specifically, through the ROS service /vx300s/set_operating_modes, the manipulator is switched to current-control
+mode, and the corresponding joint currents are then published to the
+/vx300s/commands/joint_group topic.
+Remark 9. Although 𝜆min(𝐾𝑝
+), 𝜆min(𝐾𝑑
+), and 𝜆min(𝛽) are relatively
+small, the results in Fig. 7 demonstrate a high tracking performance
+for the robot joints. This observed performance indicates that the
+identification errors are sufficiently small, suggesting that the identified
+model is both accurate and reliable for control applications.
+Fig. 7. Time profile of joint angles with the proposed control law (20).
+4.2. Constraints enforcement
+Suppose that the manipulator’s joints are constrained as follows:
+𝑎
+⊤
+𝑖
+[
+𝑞
+⊤ ̇𝑞
+⊤
+]⊤
++ ℎ𝑖 ≥ 0, 𝑖 = 1, … , 𝑛𝑐
+(29)
+where 𝑎𝑖 =
+[
+𝑎
+𝑞
+𝑖
+⊤
+𝑎
+̇𝑞
+𝑖
+⊤
+]⊤
+∈ R12 with 𝑎
+𝑞
+𝑖
+∈ R6 and 𝑎
+̇𝑞
+𝑖
+∈ R6
+, ℎ𝑖 ∈ R, and 𝑛𝑐 ∈
+Z≥0
+is the number of constraints. Note that this paper considers only
+Mechatronics 112 (2025) 103419
+9
+M.A. Momani and M. Hosseinzadeh
+Fig. 8. The general structure of the ERG framework.
+time-invariant constraints on the manipulator’s joints. Although timevarying constraints are relevant in many practical scenarios, extending
+the control framework to accommodate such cases is beyond the scope
+of this work and is left for future investigation.
+Remark 10. The constraint structure in (29) represents a general linear
+combination of joint positions and velocities, enabling the formulation
+of both independent and coupled constraints. This includes practical
+limitations such as joint position and velocity bounds, as well as more
+complex safety constraints that depend on their interaction. Additionally, this general form is compatible with constraints on control inputs
+computed via, for example, state-feedback laws. Although such input
+constraints are not considered in this work, the adopted formulation
+provides flexibility for future extensions.
+Given the desired joint angles 𝑞𝑟 ∈ R6
+, the ERG ensures the satisfaction of the constraints in (29) by determining the applied reference
+𝑞𝑣
+(𝑡) according to the following nonlinear law:
+̇𝑞𝑣 = 𝜅 ⋅ 𝛥(𝑞, ̇𝑞, 𝑞𝑣
+) ⋅ 𝜌(𝑞𝑣
+, 𝑞𝑟
+), (30)
+where 𝜅 ∈ R>0
+is an arbitrary scalar, and 𝛥(𝑞, ̇𝑞, 𝑞𝑣
+) and 𝜌(𝑞𝑣
+, 𝑞𝑟
+) are the
+Dynamic Safety Margin (DSM) and Navigation Field (NF), respectively.
+The general structure of the ERG framework is illustrated in Fig. 8.
+Dynamic Safety Margin: The DSM represents the distance between
+the constraints specified in (29) and the joint angles and velocities that
+would result from the state vector [𝑞
+⊤ ̇𝑞
+⊤]
+⊤ under a constant applied
+reference 𝑞𝑣
+. As suggested in [24–26], one approach to constructing
+the DSM is through Lyapunov theory. Specifically, given the Lyapunov
+function in (22), and assuming we can find a threshold value 𝛤
+(
+𝑞𝑣
+)
+continuous in the applied reference 𝑞𝑣
+such that 𝑉 (𝑞, ̇𝑞, 𝑞𝑣
+) ≤ 𝛤
+(
+𝑞𝑣
+)
+implies that 𝑎
+⊤
+𝑖
+[
+𝑞
+⊤ ̇𝑞
+⊤
+]⊤
++ ℎ𝑖 ≥ 0, ∀𝑖, we can define the DSM as
+follows:
+𝛥(𝑞, ̇𝑞, 𝑞𝑣
+) = 𝛤
+(
+𝑞𝑣
+)
+− 𝑉
+(
+𝑞, ̇𝑞, 𝑞𝑣
+)
+− 𝜖, (31)
+where 𝜖 ∈ R≥0
+is a static safety margin incorporated to compensate the
+impact of model uncertainty [61,62].
+The threshold value 𝛤(𝑞𝑣
+) can be computed [24,25] as:
+𝛤(𝑞𝑣
+) = min
+𝑖∈{1,…,𝑛𝑐
+}
+𝛤𝑖
+(𝑞𝑣
+), (32)
+where 𝛤𝑖
+(𝑞𝑣
+) is defined as:
+𝛤𝑖
+(𝑞𝑣
+) =
+(
+𝑎
+⊤
+𝑖
+[
+𝑞
+⊤
+𝑣
+𝟎
+]⊤
++ ℎ𝑖
+)2
+𝑎
+⊤
+𝑖
+𝑃
+−1𝑎𝑖
+, (33)
+and
+𝑃 =
+1
+2
+[
+𝐾𝑝 𝟎
+𝟎 𝑀
+]
+≻ 0, (34)
+with 𝑀 ≻ 0 satisfying 𝑀(𝑞) ⪰ 𝑀 for all 𝑞.
+Remark 11. Using a conservative lower bound for the matrix 𝑀(𝑞) can
+degrade the performance of the developed ERG-based control scheme.
+However, this choice allows for an analytical closed-form solution for
+the threshold value 𝛤𝑖
+in (33), which would otherwise require solving
+a computationally expensive optimization problem online, potentially
+limiting the method’s real-time applicability. Therefore, we consider
+this trade-off worthwhile. Approaches such as online estimation of
+a tighter lower bound for the mass matrix 𝑀(𝑞) are promising alternatives to mitigate potential performance degradation and will be
+investigated in our future work.
+Remark 12. While a natural approach to pre-stabilize the robot
+dynamics is to design a nonlinear feedback linearization controller
+using the identified mass matrix 𝑀(𝑞), along with other dynamic terms
+and appropriate compensation for identification errors, such a method
+introduces significant challenges in the design of an ERG. In particular,
+computing the DSM under feedback linearization lacks a closed-form
+solution, which complicates real-time implementation. In contrast, the
+control law presented in (20) offers a key advantage for ERG design: it
+enables an analytical expression for the DSM as in (33). This tractability
+allows the ERG to be implemented in real time, even on platforms
+with limited onboard computational resources, making it well-suited
+for safety-critical applications.
+Navigation Function: Given the desired joint angles 𝑞𝑟 ∈ R6
+, the
+NF indicates the direction of a feasible path from the current applied
+reference 𝑞𝑣
+to the desired reference 𝑞𝑟
+. The NF can be designed by
+decoupling it into an attraction term and a repulsion term as:
+𝜌(𝑞𝑣
+, 𝑞𝑟
+) = 𝜌𝑎
+(𝑞𝑣
+, 𝑞𝑟
+) + 𝜌𝑟
+(𝑞𝑣
+), (35)
+where the attraction term 𝜌𝑎
+(𝑞𝑣
+, 𝑞𝑟
+) is a vector field which points
+towards the desired reference 𝑞𝑟
+, and the repulsion term 𝜌𝑟
+(𝑞𝑣
+) is a
+vector field which points away from the constraints. These two vector
+fields can be defined as
+𝜌𝑎
+(𝑞𝑣
+, 𝑞𝑟
+) =
+𝑞𝑟 − 𝑞𝑣
+max {
+‖
+‖
+𝑞𝑟 − 𝑞𝑣
+‖
+‖
+, 𝜂} , (36)
+and
+𝜌𝑟
+(𝑞𝑣
+) =
+𝑛∑𝑐
+𝑖=1
+max
+⎧
+⎪
+⎨
+⎪
+⎩
+𝜉 − 𝑎
+⊤
+𝑖
+[
+𝑞
+⊤
+𝑣
+𝟎
+]⊤
+− ℎ𝑖
+𝜉 − 𝛿
+, 0
+⎫
+⎪
+⎬
+⎪
+⎭
+𝑎
+𝑞
+𝑖
+‖
+‖
+‖
+𝑎
+𝑞
+𝑖
+‖
+‖
+‖
+, (37)
+where 𝜂 ∈ R>0
+is a smoothing factor to avoid numerical issues, and
+𝜉, 𝛿 ∈ R>0
+satisfying 𝜉 > 𝛿 are design parameters. Note that the
+repulsion term guarantees that 𝑎
+⊤
+𝑖
+[
+𝑞
+⊤
+𝑣
+𝟎
+]⊤
++ ℎ𝑖 ≥ 𝛿.
+4.3. Experimental results
+This subsection presents experimental validation of the developed
+ERG, showing the reliability of the identified model for the ViperX-300
+6DoF robotic manipulator in safety-critical applications. The experimental setup is presented in Fig. 9. The experimental setup involves
+controlling the ViperX-300 6DoF robotic manipulator using a highperformance computing unit powered by a 13th Gen Intel®
+Core™
+i9-13900K processor with 64 GB of RAM. The computing system
+operates both Linux and Windows at the same time on a Windows
+machine using the Windows Subsystem for Linux 2 (WSL 2). A Python
+ROS2 node, running on Ubuntu Linux 22.04, manages communication
+with the manipulator to send commands and receive sensor data. A
+pivotal component of the setup is a Python server, running on the
+Windows side, which bridges the ROS2 node and MATLAB. This server
+uses TCP/IP communication to exchange data with the ROS2 node,
+forwarding it to a MATLAB function that calculates critical dynamic
+parameters, such as the mass-inertia matrix. The computed results are
+then formatted and transmitted back to the ROS2 node for real-time
+control calculations. All the code used in this experimental study is
+available at [29].
+We impose constraints on the angles of joints 1 and 3, ensuring
+𝑞1
+(𝑡) ≤ 80◦ and 𝑞3
+(𝑡) ≥ −50◦
+, for all 𝑡 ≥ 0. For the implementation of
+the ERG, the following parameters are used: 𝜖 = 1 × 10−3
+, 𝜅 = 1 × 10−3
+,
+𝜂 = 0.01, 𝜉 = 0.8, and 𝛿 = 0.5. The ERG framework in (30) is implemented in discrete time using a zero-order hold (ZOH) to update the
+Mechatronics 112 (2025) 103419
+10
+M.A. Momani and M. Hosseinzadeh
+Fig. 9. Experimental setup for implementing the ERG on the ViperX-300 6DoF robotic manipulator. All code used in the experiments is available at [29].
+Fig. 10. Experimental validation of the developed ERG for the ViperX-300
+6DoF robotic manipulator.
+applied reference at each sampling instant. The controller is executed at
+200 Hz (sampling period 5 ms), while the applied reference is updated
+every 0.2 s to ensure smooth operation. The desired reference is 𝑞𝑟 =
+[90 0 − 60 0 0 0]⊤, which does not represent a steady-state admissible
+configuration under the imposed constraints. We start from the initial
+condition 𝑞(0) = [−30 0 50 0 0 0]⊤.
+Experimental results for Joint 1 and Joint 3 are presented in Fig.
+10. As shown, since the desired configuration is not feasible, the
+ViperX-300 6DoF robotic manipulator adjusts its position to achieve
+the ‘‘best’’ feasible configuration (that is [79.5 0 − 49.5 0 0 0]⊤) without
+violating the constraints. Since 𝜖 is very small, our results not only
+highlight the effectiveness of the proposed identification approach but
+also underscore the reliability of the identified model for the ViperX300 6DoF robotic manipulator for safety-critical applications. A slowed
+video at 0.5x speed of this experiment is available at the following URL:
+https://youtu.be/pkxozXyPYPs.
+5. Conclusion
+This paper presented a systematic and comprehensive procedure
+for dynamics identification of robotic manipulators. It also addressed
+ensuring physical feasibility, despite the varying torque ranges across
+different joints in these robots. The proposed procedure was validated
+on the ViperX-300 6DoF robotic manipulator, as no dynamic model
+has been derived for this robotic arm. Additionally, a novel robust
+control scheme was developed for robotic arms with model uncertainty, and its stability and tracking performance guarantees were
+derived analytically. To enhance the constraint satisfaction capabilities
+of the developed control scheme, we developed an explicit reference
+governor. This model-based add-on unit modifies the reference signal
+as needed to ensure that constraints on joint angles are satisfied at
+all times. Consequently, its effectiveness can be utilized to further
+validate the identification procedure and evaluate the suitability of the
+identified model for safety-critical applications. Experimental results
+demonstrated that the proposed procedure successfully produces a
+model with adequate accuracy for safety-critical applications and that
+the identified model for the ViperX-300 6-DoF robotic manipulator is
+reliable enough for further use by other researchers.
+CRediT authorship contribution statement
+Mu’taz A. Momani: Writing – original draft, Visualization, Validation, Software, Methodology, Data curation. Mehdi Hosseinzadeh: Writing – review & editing, Visualization, Validation, Supervision, Project administration, Methodology, Investigation, Funding
+acquisition, Formal analysis, Conceptualization.
+Declaration of competing interest
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to
+influence the work reported in this paper.
+Acknowledgments
+This research was supported by the National Science Foundation,
+United States under award number ECCS-2515358.
+Data availability
+Data will be made available on request.
+Mechatronics 112 (2025) 103419
+11
+M.A. Momani and M. Hosseinzadeh
+References
+[1] Li Y, Na J, Gao G. Dynamic modeling and analysis for 6-DOF industrial robots.
+In: 2020 IEEE 9th data driven control and learning systems conference. DDCLS,
+IEEE; 2020, p. 247–52.
+[2] Swevers J, Verdonck W, De Schutter J. Dynamic model identification for
+industrial robots. IEEE Control Syst Mag 2007;27(5):58–71.
+[3] Jin J, Gans N. Parameter identification for industrial robots with a fast and
+robust trajectory design approach. Robot Comput-Integr Manuf 2015;31:21–9.
+[4] Bilal H, Obaidat MS, Aslam MS, Zhang J, Yin B, Mahmood K. Online fault
+diagnosis of industrial robot using IoRT and hybrid deep learning techniques:
+An experimental approach. IEEE Internet Things J 2024;11(19):31422–37.
+[5] Shamrooz S, Aslam MS, Liu H, Bilal H, Vasilakos AV. Modeling of asynchronous
+mode–dependent delays in stochastic Markovian jumping modes based on
+static neural networks for robotic manipulators. IEEE Trans Autom Sci Eng
+2025;22:13398–410.
+[6] Liu S-P, Ma Z-Y, Chen J-L, Cao J-F, Fu Y, Li S-Q. An improved parameter identification method of redundant manipulator. Int J Adv Robot Syst
+2021;18(2).
+[7] Choi JS, Yoon JH, Park JH, Kim PJ. A numerical algorithm to identify independent grouped parameters of robot manipulator for control. In: Proceedings of
+the IEEE/ASME international conference on advanced intelligent mechatronics.
+Budapest, Hungary; 2021, p. 373–8.
+[8] Qin Z, Baron L, Birglen L. A new approach to the dynamic parameter
+identification of robotic manipulators. Robotica 2009;28(4):539–47.
+[9] Forssell U, Ljung L. Closed-loop identification revisited. Automatica
+1999;35(7):1215–41.
+[10] den Hof PV. Closed-loop issues in system identification. Annu Rev Control
+1998;22:173–86.
+[11] Yoshida K, Khalil W. Verification of the positive definiteness of the inertial matrix of manipulators using base inertial parameters. Int J Robot Res
+2000;19(5):498–510.
+[12] Yoshida K, Osuka K, Mayeda H, Ono T. When is the set of base parameter values
+physically impossible? In: Proceedings of the IEEE/RSJ international conference
+on intelligent robots and systems. Munich, Germany; 1994, p. 335–42.
+[13] Leboutet Q, Roux J, Janot A, Guadarrama-Olvera JR, Cheng G. Inertial parameter
+identification in robotics: A survey. Appl Sci 2021;11(9):4303.
+[14] Mata V, Benimeli F, Farhat N, Valera A. Dynamic parameter identification in
+industrial robots considering physical feasibility. Adv Robot 2005;19(1):101–19.
+[15] Sousa CD, Cortesao R. Physical feasibility of robot base inertial parameter identification: A linear matrix inequality approach. Int J Robot Res
+2014;33(6):931–44.
+[16] Sousa CD, Cortesão R. Inertia tensor properties in robot dynamics identification: A linear matrix inequality approach. IEEE/ASME Trans Mechatronics
+2019;24(1):406–11.
+[17] Sousa CD, Cortesão R. Physically feasible dynamic parameter identification of the
+7-DOF WAM robot. In: Proceedings of the IEEE/RSJ international conference on
+intelligent robots and systems. Tokyo, Japan; 2013, p. 2868–73.
+[18] Wen H, Fu W, Feng Y, Chen J, Chen W, Lai Q. Dynamic parameters identification
+for manipulators considering physical feasibility and nonlinear friction. In:
+Proceedings of the IEEE international conference on robotics and biomimetics.
+Jinghong, China; 2021, p. 610–5.
+[19] Farhat N, Díaz-Rodríguez M, Mata V. Dynamic parameter identification of
+parallel robots considering physical feasibility and nonlinear friction models. In:
+Proceedings of the 12th world congress in mechanism and machine science.
+Besancon, Francia; 2007.
+[20] https://docs.trossenrobotics.com/interbotix_xsarms_docs/specifications/vx300s.
+html, [Accessed 9 September 2025].
+[21] Huang B, Malhotra A, Tamayo EC. Model predictive control relevant
+identification and validation. Chem Eng Sci 2003;58(11):2380–401.
+[22] Huang B, Tamayo EC. Model validation for industrial model predictive control
+systems. Chem Eng Sci 2000;55(112):2315–27.
+[23] Amiri M, Hosseinzadeh M. Closed-loop model identification and MPC-based
+navigation of quadcopters: A case study of parrot bebop 2. IFAC-PapersOnLine
+2024;58(28):330–5.
+[24] Hosseinzadeh M. Optimization-free control of safety-critical systems subject to
+the intersection of multiple time-varying concave constraints. IEEE Trans Autom
+Control 2024;69(11):7773–84.
+[25] Hosseinzadeh M, Garone E. An explicit reference governor for the intersection
+of concave constraints. IEEE Trans Autom Control 2019;65(1):1–11.
+[26] Nicotra MM, Garone E. The explicit reference governor: A general framework
+for the closed-form control of constrained nonlinear systems. IEEE Control Syst
+Mag 2018;38(4):89–107.
+[27] Hosseinzadeh M, Cotorruelo A, Limon D, Garone E. Constrained control of
+linear systems subject to combinations of intersections and unions of concave
+constraints. IEEE Control Syst Lett 2019;3(3):571–6.
+[28] Hosseinzadeh M, Sinopoli B, Bobick AF. An explicit reference governor for timevarying linear constraints. In: Proc. IEEE 59th conf. decision and control. Jeju
+Island, Republic of Korea; 2020, p. 3323–8.
+[29] https://github.com/MomaniMutaz/ViperX-300-6DoF-Robotic-Arm-DynamicalModel, [Accessed 9 September 2025].
+[30] Merckaert K, Convens B, ju Wu C, Roncone A, Nicotra MM, Vanderborght B. Real-time motion control of robotic manipulators for safe human–robot
+coexistence. Robot Comput-Integr Manuf 2022;73:102223.
+[31] Merckaert K, Convens B, Nicotra MM, Vanderborght B. Explicit reference
+governor for certified safe, fast, and real-time cobot control in human-robot
+shared workspaces. In: Proc. ICRA 2022 workshop on collaborative robots and
+the work of the future. Philadelphia, PA, USA; 2022.
+[32] Merckaert K, Vanderborght B, Nicotra MM, Garone E. Constrained control of
+robotic manipulators using the explicit reference governor. In: Proceedings of
+the IEEE/RSJ international conference on intelligent robots and systems. Madrid,
+Spain; 2018, p. 5155–62.
+[33] Nicotra MM, Garone E. Control of Euler-Lagrange systems subject to constraints:
+An explicit reference governor approach. In: Proceedings of the 54th IEEE
+conference on decision and control. Osaka, Japan; 2015, p. 1154–9.
+[34] Luiz A, Ebrahim S, Edson R. Constrained control of non-holonomic mobile
+manipulator by explicit reference governor. In: Proceedings of the Latin American
+robotics symposium, Brazilian symposium on robotics, and workshop on robotics
+in education. Natal, Brazil; 2021, p. 156–61.
+[35] Craig JJ. Introduction to robotics. Pearson Educacion; 2006.
+[36] Tsai L-W. Robot analysis: The mechanics of serial and parallel manipulators.
+Wiley-Interscience; 1999.
+[37] Grotjahn M, Daemi M, Heimann B. Friction and rigid body identification of robot
+dynamics. Int J Solids Struct 2001;38(10–13):1889–902.
+[38] Yang X, Du Y, Li L, Zhou Z, Zhang X. Physics-informed neural network for model
+prediction and dynamics parameter identification of collaborative robot joints.
+IEEE Robot Autom Lett 2023;8(12):8462–9.
+[39] Liu J, Borja P, Della Santina C. Physics-informed neural networks to model
+and control robots: A theoretical and experimental investigation. Adv Intell Syst
+2024;6(5):2300385.
+[40] Bensch M, Job T-D, Habich T-L, Seel T, Schappler M. Physics-informed neural
+networks for continuum robots: Towards fast approximation of static Cosserat
+rod theory. In: 2024 IEEE international conference on robotics and automation.
+ICRA, IEEE; 2024, p. 17293–9.
+[41] Gu W, Primatesta S, Rizzo A. Physics-informed neural network for quadrotor
+dynamical modeling. Robot Auton Syst 2024;171:104569.
+[42] Gautier M. Identification of robots dynamics. IFAC Proc Vol 1986;19(14):125–30.
+[43] Khalil W, Dombre E. Modeling, identification and control of robots.
+Butterworth-Heinemann; 2004.
+[44] Hollerbach J, Khalil W, Gautier M. Model identification. Springer; 2008.
+[45] Sousa CJSD. Dynamic model identification of robot manipulators: Solving the
+physical feasibility problem (Ph.D. dissertation), 2015.
+[46] Khalil W, Kleinfinger J-F. Minimum operations and minimum parameters of the
+dynamic models of tree structure robots. IEEE J Robot Autom 1987;3(6):517–26.
+[47] Gautier M, Khalil W. Direct calculation of minimum set of inertial parameters
+of serial robots. IEEE Trans Robot Autom 1990;6(3):368–73.
+[48] Mayeda H, Yoshida K, Osuka K. Base parameters of manipulator dynamic models.
+In: Proceedings. 1988 IEEE international conference on robotics and automation.
+IEEE; 1988, p. 1367–72.
+[49] Swevers J, Ganseman C, Tukel DB, De Schutter J, Van Brussel H. Optimal robot
+excitation and identification. IEEE Trans Robot Autom 1997;13(5):730–40.
+[50] Kleinbaum DG, Kupper LL, Nizam A, Rosenberg ES. Applied regression analysis
+and other multivariable methods. 5th ed.. Cengage Learning; 2013.
+[51] Kane TR, Levinson DA. Dynamics: Theory and applications. 1st ed.. McGraw-Hill
+College; 1985.
+[52] Hibbeler RC. Engineering mechanics: Dynamics. 13th ed.. Pearson College Div;
+2012.
+[53] Wensing PM, Kim S, Slotine J-JE. Linear matrix inequalities for physically
+consistent inertial parameter identification: A statistical perspective on the mass
+distribution. IEEE Robot Autom Lett 2017;3(1):60–7.
+[54] https://docs.ros.org/en/foxy/index.html, [Accessed 9 September 2025].
+[55] Lofberg J. YALMIP: a toolbox for modeling and optimization in MATLAB. In:
+Proc. IEEE int. conf. robotics and automation. Taipei, Taiwan; 2004, p. 284–9.
+[56] Afan HA, Yafouz A, Birima AH, Ahmed AN, Kisi O, Chaplot B, El-Shafie A.
+Linear and stratified sampling-based deep learning models for improving
+the river streamflow forecasting to mitigate flooding disaster. Nat Hazards
+2022;112:1527–45.
+[57] Khumprom P, Grewell D, Yodo N. Deep neural network feature selection
+approaches for data-driven prognostic model of aircraft engines. Aerospace
+2020;7(9):132.
+[58] Tadese M, Pico N, Seo S, Moon H. A two-step method for dynamic
+parameter identification of indy7 collaborative robot manipulator. Sensors
+2022;22(24):9708.
+[59] Lewis FL, Dawson DM, Abdallah CT. Robot manipulator control: theory and
+practice. CRC Press; 2003.
+[60] Khalil HK. Nonlinear systems. Prentice Hall; 2002.
+[61] Hosseinzadeh M, Dumont GA, Garone E. Constrained control of depth of hypnosis
+during induction phase. IEEE Trans Control Syst Technol 2019;28(6):2490–6.
+[62] Hosseinzadeh M, van Heusden K, Yousefi M, Dumont GA, Garone E. Safety
+enforcement in closed-loop anesthesia—A comparison study. Control Eng Pract
+2020;105:104653.

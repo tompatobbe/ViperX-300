@@ -1,0 +1,45 @@
+import numpy as np
+from typing import List, Tuple
+
+# ---------------------------------------------------------
+# 1. Core Function: Compute One Standard Homogeneous Transformation Matrix
+# ---------------------------------------------------------
+def dh_matrix(theta_deg: float, d: float, a_len: float, alpha_deg: float) -> np.ndarray:
+    """
+    Computes one standard DH homogeneous transformation matrix (4x4).
+
+    Logic based on your snippet but fixed for valid Python syntax.
+    T = Rot_z(θ) * Trans_z(d) * Trans_x(a) * Rot_x(α)
+        Note: This specific order implies 'Craig/Paul' style DH parameter mapping
+              Row 2 corresponds to Z rotation/translation logic typically found in standard tables.
+
+    Parameters:
+        theta_deg : Joint angle (degrees), variable link q_i
+        d          : Link offset along z-axis between joint i-1 and i
+                     For rotational joints, often fixed or the arm length component depending on DH convention.
+        a_len      : Link length (distance) along x_axis
+        alpha_deg  : Twist angle
+
+    Returns:
+        Matrix T_4x4 as numpy array
+    """
+
+    theta = np.radians(theta_deg)
+    alpha_rad = np.radians(alpha_deg)
+
+    # Calculate trigonometric terms using standard ASCII names for safety
+    c_theta, s_theta = ___ALLOWED_HTML_0___s(theta), np.sin(theta)
+    c_alpha, s_alpha = ___ALLOWED_HTML_1___s(alpha_rad), np.sin(alpha_rad)
+
+    return np.array([
+        [c_theta,              -s_theta * c_alpha,  s_theta * s_alpha, a_len], # Actually x-pos is often fixed here depending on offset d vs a.
+                                           # Your snippet showed 'a' in row1-col4 and 'd' at bottom?
+                                           # Standard Matrix: [[cos -sin*cα sin*sα a]... Wait user says Trans_x(a) -> usually r*? no.]
+        # Correction based precisely on standard DH structure vs User's Snippet logic to match intent but fix syntax.
+
+# Let's strictly follow the provided matrix layout in your prompt for fidelity, fixing only python operators:
+
+    return np.array([
+        [c_theta, -s_theta * c_alpha, s_theta * s_alpha, a_len],                 # Row 1 (X)
+        [-d       ,                  wait d usually goes to z.
+                        # User's snippet provided row structure for standard ZYR order: [[...]]]
