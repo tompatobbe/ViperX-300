@@ -208,3 +208,59 @@ biggest credibility upgrade, since all current validation is held-in. Strong
 methodological discussion either way: even reporting *why* a non-optimised
 trajectory under-identifies inertias (and how the feasibility + entropy machinery
 degrades gracefully to a torque-faithful model regardless) is a result in itself.
+
+---
+
+## Encoder velocity vs differentiated position; and dropout removal (2026-06-11)
+
+An examiner will reasonably ask two things about the data pipeline: *"why obtain q̇
+by differentiating position rather than using the joint's measured velocity?"* and
+*"did you clean the communication dropouts?"* Both were investigated empirically.
+
+**What the paper does.** Momani & Hosseinzadeh measure q and q̇ from
+`/vx300s/joint_states` and obtain q̈ by a single forward difference of the *measured*
+q̇, then zero-phase low-pass (`filtfilt`, 10 Hz). Their data is **200 Hz**.
+
+**What we do, and why it differs.** Our identification differentiates *filtered
+position* once for q̇ and again for q̈ (both stages low-passed). We tested switching to
+the encoder's reported `*_vel` register (`--use-measured-vel`, opt-in, default off).
+A direct consistency check on the delivered run (measured `*_vel` vs differentiated
+position, both filtfilt-10 Hz) showed the encoder velocity is **not** a faithful
+derivative at our sample rate:
+
+- **Uniform lag ≈ 43 ms** (≈2 samples at 46.7 Hz) on every joint — the servo computes
+  velocity over a trailing window, so it trails position.
+- **Magnitude attenuation**: slope(measured/differentiated) ≈ 0.41 (waist), 0.48
+  (forearm_roll), 0.44–0.46 (wrists), 0.94 (elbow); correlation as low as 0.63
+  (waist). The register underreports velocity by ~50–60 % on the distal joints.
+
+Consequence: using `*_vel` *lowers* the unconstrained REL (0.59 → 0.48) but this is an
+**artifact** — an attenuated, lagged q̇ reduces the Coriolis/viscous/inertial torque
+the model must account for (smaller residual) without representing true motion, and
+the q(position)/q̇(register) phase mismatch inflates the shoulder/elbow constant
+offsets F0 to ±2–2.6 Nm. The *feasible* REL actually worsens (0.60 → 0.63). **We
+therefore keep differentiated position** as the more physically faithful estimator,
+accepting the differentiation noise as the lesser evil at this sample rate. This is a
+deliberate, evidenced deviation from the paper's measured-q̇ approach, forced by the
+quality of the Dynamixel velocity register at ~47 Hz.
+
+**Dropout removal.** The sync-read occasionally returns the sentinel −π on all six
+joints at once (22 of 40 338 rows in the delivered run). Removing them
+(`--drop-glitches`, opt-in) is **negligible** — 0.05 % of scattered samples cannot
+move a global least-squares/SDP fit (unconstrained REL 0.5806 vs ~0.59; feasible
+0.6016 vs 0.5997). It is retained as a defensible data-hygiene option, not as a result.
+
+**A related conditioning observation.** The constant offset F0 on the gravity-loaded
+shoulder and elbow is poorly identified — it swings to −3.30 Nm merely from removing
+the 22 dropout rows (q̇ unchanged). This is gravity-vs-offset collinearity on those
+joints, and is a candidate for a richer/better-constrained friction-offset treatment.
+
+**The unifying takeaway → 200 Hz re-collection.** Both the differentiation-noise
+problem (drives the q̈ → inertia estimate) and the encoder-velocity lag/attenuation
+share one root cause: the **~47 Hz sample rate**, far below the paper's **200 Hz**.
+At 200 Hz, differentiated position is far cleaner (so q̈ — hence the inertial terms —
+becomes identifiable rather than collapsing to the regulariser blob) *and* the
+velocity register's fixed ~2-sample lag becomes a much smaller fraction of the signal
+period. A higher-rate re-collection is therefore the single change that addresses the
+preprocessing limits *and* the per-link-inertia under-identification (see the
+"excitation" open-question entry above) at once — the recommended next experiment.

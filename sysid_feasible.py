@@ -247,12 +247,29 @@ EFFORT_SCALE     = (TORQUE_CONSTANT / 1000.0) * MOTORS_PER_JOINT   # mA → Nm
 ARM_JOINTS   = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 
 
-def load_and_filter(csv_path, fs=50.0, fc=10.0, stride=1):
+def load_and_filter(csv_path, fs=50.0, fc=10.0, stride=1,
+                    drop_glitches=False, use_measured_vel=False):
     df = pd.read_csv(csv_path)
     t  = df["time"].values.astype(float); t -= t[0]
 
     q_raw   = df[[f"{j}_pos"    for j in ARM_JOINTS]].values.astype(float)
     tau_raw = df[[f"{j}_effort" for j in ARM_JOINTS]].values.astype(float) * EFFORT_SCALE
+    qd_raw  = (df[[f"{j}_vel"   for j in ARM_JOINTS]].values.astype(float)
+               if use_measured_vel else None)
+
+    # Drop communication-dropout rows: the sync-read occasionally returns the
+    # sentinel −π on *all* joints simultaneously (22 such rows in the
+    # 20260518_143818 run). Left in, each one smears a large spurious
+    # acceleration/torque spike across the zero-phase filter's support.
+    if drop_glitches:
+        glitch = np.all(np.abs(q_raw - (-np.pi)) < 1e-3, axis=1)
+        n_glitch = int(glitch.sum())
+        if n_glitch:
+            keep = ~glitch
+            t, q_raw, tau_raw = t[keep], q_raw[keep], tau_raw[keep]
+            if qd_raw is not None:
+                qd_raw = qd_raw[keep]
+            print(f"    [drop-glitches] removed {n_glitch} all-joints=−π dropout row(s)")
 
     fs_actual = 1.0 / float(np.median(np.diff(t)))
     if abs(fs_actual - fs) > 2.0:
@@ -266,8 +283,13 @@ def load_and_filter(csv_path, fs=50.0, fc=10.0, stride=1):
     q_filt   = np.vstack([sig.filtfilt(b, a, q_raw[:,j])   for j in range(N_JOINTS)]).T
     tau_filt = np.vstack([sig.filtfilt(b, a, tau_raw[:,j]) for j in range(N_JOINTS)]).T
     dt  = np.gradient(t)
-    dq  = np.gradient(q_filt, axis=0) / dt[:, np.newaxis]
-    dq  = np.vstack([sig.filtfilt(b, a, dq[:,j]) for j in range(N_JOINTS)]).T
+    if use_measured_vel:
+        # Use the encoder's reported velocity (one fewer differentiation stage
+        # than diff'ing position): q̇ measured → q̈ by a single difference.
+        dq = np.vstack([sig.filtfilt(b, a, qd_raw[:,j]) for j in range(N_JOINTS)]).T
+    else:
+        dq  = np.gradient(q_filt, axis=0) / dt[:, np.newaxis]
+        dq  = np.vstack([sig.filtfilt(b, a, dq[:,j]) for j in range(N_JOINTS)]).T
     ddq = np.gradient(dq, axis=0) / dt[:, np.newaxis]
     ddq = np.vstack([sig.filtfilt(b, a, ddq[:,j]) for j in range(N_JOINTS)]).T
 
@@ -635,13 +657,16 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True,
 def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
                        verbose=True, plot=True, method='trust-constr',
                        w1=1.0, w2=5e-3, entropic_gamma=0.0, solver=None,
-                       ref_mass=0.5, ref_inertia=1e-3):
+                       ref_mass=0.5, ref_inertia=1e-3,
+                       drop_glitches=False, use_measured_vel=False):
     print("=" * 60)
     print(f"ViperX-300 SysID — Full feasibility (stride={stride})")
     print("=" * 60)
 
     print("\n[1] Loading and filtering data...")
-    t, q, dq, ddq, tau_meas = load_and_filter(csv_path, fs=fs, fc=fc_lpf, stride=stride)
+    t, q, dq, ddq, tau_meas = load_and_filter(
+        csv_path, fs=fs, fc=fc_lpf, stride=stride,
+        drop_glitches=drop_glitches, use_measured_vel=use_measured_vel)
     N = len(t)
     print(f"    Samples: {N},  duration: {t[-1]-t[0]:.2f} s")
 
@@ -796,6 +821,14 @@ if __name__ == "__main__":
                         help="Override CVXPY solver (e.g. CLARABEL, SCS). "
                              "CLARABEL (interior-point) is more accurate near the "
                              "feasibility margins than the default SCS.")
+    parser.add_argument("--drop-glitches", action="store_true",
+                        help="Remove communication-dropout rows where all joints "
+                             "read the sentinel −π simultaneously (22 in the "
+                             "20260518_143818 run) before filtering.")
+    parser.add_argument("--use-measured-vel", action="store_true",
+                        help="Use the encoder's reported *_vel column for q̇ "
+                             "(one fewer differentiation stage) instead of "
+                             "differentiating filtered position.")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--force",   action="store_true",
                         help="Recompute even if an identical artifact already exists")
@@ -828,6 +861,14 @@ if __name__ == "__main__":
         "torque_constant":  TORQUE_CONSTANT,
         "motors_per_joint": MOTORS_PER_JOINT.tolist(),
     }
+    # Added conditionally so the prior recipe (neither flag) keeps its existing
+    # config hash and still reproduces the delivered artifact byte-for-byte;
+    # enabling either flag yields a distinct hash → a new artifact filename,
+    # never overwriting the old run.
+    if args.drop_glitches:
+        config["drop_glitches"] = True
+    if args.use_measured_vel:
+        config["use_measured_vel"] = True
 
     # Cache-hit check: skip expensive computation if the artifact already exists.
     if not args.force:
@@ -850,6 +891,7 @@ if __name__ == "__main__":
         w1=args.w1, w2=args.w2,
         entropic_gamma=args.entropic, solver=args.solver,
         ref_mass=args.ref_mass, ref_inertia=args.ref_inertia,
+        drop_glitches=args.drop_glitches, use_measured_vel=args.use_measured_vel,
     )
 
     npy_path, json_path = pipeline_artifacts.save_artifact(

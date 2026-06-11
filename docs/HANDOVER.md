@@ -1,7 +1,19 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-10 (end of session). **Phase:** identification **COMPLETE**
+**Last updated:** 2026-06-11. **Phase:** identification **COMPLETE**
 → **control** (a validated, control-ready URDF now exists).
+
+> **2026-06-11 note — preprocessing investigated, delivered model unchanged.** Added
+> two opt-in flags to `sysid_feasible.py` (`--drop-glitches`, `--use-measured-vel`,
+> both default-off) and tested them. Result is a **negative result**: dropout removal
+> is negligible (22/40 316 rows), and using the encoder velocity register only *looks*
+> better (unconstrained REL 0.48) because that register is **lagged ~43 ms and
+> attenuated ~0.4–0.9×** at 47 Hz — its feasible REL is actually worse (0.63) and it
+> inflates the F0 offsets. Differentiated position stays the default; the delivered
+> model is untouched. **The real lever confirmed: a 200 Hz re-collection** (paper's
+> rate) — cleans q̈ for inertia ID *and* shrinks the velocity-register lag. Full detail
+> in the 2026-06-11 CHANGELOG entry and THESIS_NOTES "Encoder velocity vs
+> differentiated position". All four attribution runs preserved on disk by cfg hash.
 
 This is the "where was I / what's next" anchor. For depth: `CHANGELOG.md` (dated
 log), `THESIS_NOTES.md` (discussion), `PAPER_SUMMARY.md` (the paper).

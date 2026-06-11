@@ -9,6 +9,90 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-11 — Two opt-in data-conditioning improvements (glitch drop + measured velocity)
+
+**Area:** `sysid_feasible.py` (`load_and_filter`, `run_identification`, CLI) · data
+preprocessing for identification · opt-in, default-off
+
+### Problem / Motivation
+Analysis of the delivered run (`traj_run_20260518_143818.csv`) against the paper's
+excitation design surfaced two preprocessing weaknesses (the frequency content and
+friction excitation were otherwise good):
+1. **22 communication-dropout rows** where the sync-read returns the sentinel −π on
+   *all six* joints at once (≈0.05 % of samples, scattered). Left in, each is smeared
+   by the zero-phase `filtfilt` into a large spurious velocity/acceleration/torque
+   spike around it.
+2. **q̇ obtained by differentiating filtered position** (then differentiated again for
+   q̈), so the inertial regressor columns ride on double-differentiation noise. The
+   encoder already reports velocity directly; the paper differentiates *measured* q̇
+   only once. This double-diff noise is a plausible contributor to the per-link
+   inertias collapsing to a generic blob (REL stuck at 0.59 vs the paper's 0.43).
+
+### Change
+Added two **opt-in** flags to `sysid_feasible.py`, both default-off:
+- `--drop-glitches` — removes rows where `all(|q − (−π)| < 1e-3)` before filtering.
+- `--use-measured-vel` — uses the `*_vel` columns for q̇ (one fewer differentiation
+  stage); q̈ is then a single difference of measured q̇.
+
+The flags are threaded through `run_identification` and added to the config dict
+**conditionally** (only when set), so the prior recipe (neither flag) keeps its exact
+config hash and still reproduces the delivered artifact byte-for-byte. Enabling either
+flag changes the hash → a new artifact filename; nothing is overwritten. `PIPELINE_VERSION`
+is deliberately **not** bumped (the default code path is unchanged).
+
+### Evidence
+Read-only analysis of the delivered CSV (n=40 338, 865 s, ≈47 Hz):
+- 22 rows with all joints = −3.142 exactly (comm dropout), scattered across the run.
+- Dominant velocity frequencies on 0.1 Hz fundamental + harmonics to ~0.5 Hz (matches
+  paper f_l=0.1 Hz, N_f=5) — excitation design itself is sound.
+- Velocity-sign balance ~40–52 % each direction per joint — Coulomb friction
+  well-conditioned.
+
+**Attribution runs (delivered recipe `--method cvxpy --entropic 0.05 --w2 100
+--solver CLARABEL --stride 1`, REL = mean over joints):**
+
+| Config | Unconstrained REL | Final (feasible) REL | cfg hash |
+|---|---|---|---|
+| no flags (delivered) | ~0.59 | 0.5997 | 640cb8ef |
+| `--drop-glitches` | 0.5806 | 0.6016 | 9ef2c992 |
+| `--use-measured-vel` | **0.4786** | 0.6320 | 8c7e81f6 |
+| both | 0.4755 | 0.6354 | f740b783 |
+
+Conclusion: **neither flag improves the *feasible* model**, and both are kept
+default-off. Specifics:
+- `--drop-glitches`: negligible (22/40 316 rows can't move a global fit). Harmless;
+  retained as a hygiene option, not a result.
+- `--use-measured-vel`: lowers the *unconstrained* REL to 0.48 but the feasible REL
+  gets *worse* (0.63), and the gain is an **artifact**. A velocity-consistency check
+  (measured `*_vel` vs differentiated position, both filtered) shows the encoder
+  velocity is **lagged ≈43 ms (≈2 samples) on every joint and attenuated** — slope
+  (measured/differentiated) ≈ 0.41 (waist), 0.48 (forearm_roll), 0.44–0.46 (wrists),
+  0.94 (elbow); corr as low as 0.63 (waist). The attenuated/lagged `q̇` shrinks the
+  Coriolis/viscous/inertial torque the model must explain (→ lower residual) without
+  representing true motion, and the `q`(position)–`q̇`(register) phase mismatch is what
+  inflates the shoulder/elbow `F0` offsets to ±2–2.6 Nm. **Differentiated position is
+  the more faithful estimator and remains the default.**
+
+A side observation: the shoulder/elbow constant offset `F0` is poorly conditioned
+(swings to −3.30 Nm in the drop-glitches-only run, where `q̇` is unchanged from
+delivered) — gravity-vs-offset collinearity on the gravity-loaded joints.
+
+### Impact
+**No change to the delivered model** — it remains the best feasible model. Both flags
+default off; the delivered recipe reproduces byte-for-byte (unchanged config hash).
+The four runs are preserved on disk under distinct hashes for the thesis comparison
+table. The remaining lever is unchanged: a **higher-rate (200 Hz) re-collection** —
+the paper's rate — which both cleans `q̈` from differentiated position *and* yields a
+velocity register with far less relative lag, and is also the prerequisite for
+identifying per-link inertias (see THESIS_NOTES "Encoder velocity vs differentiated
+position").
+
+### Open questions / assumptions
+- A lag-corrected + rescaled measured velocity was considered and rejected as fragile;
+  a 200 Hz re-collection solves the root cause instead.
+
+---
+
 ## 2026-06-10 — FINAL identified model (stride-1): identification phase complete
 
 **Area:** identification deliverable · `outputs/` artifacts
