@@ -14,6 +14,12 @@
 > rate) — cleans q̈ for inertia ID *and* shrinks the velocity-register lag. Full detail
 > in the 2026-06-11 CHANGELOG entry and THESIS_NOTES "Encoder velocity vs
 > differentiated position". All four attribution runs preserved on disk by cfg hash.
+>
+> **Next action: the 200 Hz re-collection.** Lab runbook written at
+> **`docs/COLLECTION_200HZ.md`** — root cause (FTDI latency_timer 16 ms → 1 ms),
+> the `ros2 topic hz` verification gate, a recorder-throttle caveat, and the
+> identify/validate steps. Tier-1 (rate) only; recorder-fidelity and
+> excitation-conditioning improvements are listed there as deferred.
 
 This is the "where was I / what's next" anchor. For depth: `CHANGELOG.md` (dated
 log), `THESIS_NOTES.md` (discussion), `PAPER_SUMMARY.md` (the paper).
