@@ -15,11 +15,18 @@
 > in the 2026-06-11 CHANGELOG entry and THESIS_NOTES "Encoder velocity vs
 > differentiated position". All four attribution runs preserved on disk by cfg hash.
 >
-> **Next action: the 200 Hz re-collection.** Lab runbook written at
-> **`docs/COLLECTION_200HZ.md`** — root cause (FTDI latency_timer 16 ms → 1 ms),
-> the `ros2 topic hz` verification gate, a recorder-throttle caveat, and the
-> identify/validate steps. Tier-1 (rate) only; recorder-fidelity and
-> excitation-conditioning improvements are listed there as deferred.
+> **Next action: the 200 Hz re-collection — tooling is ready (2026-06-11 evening).**
+> One-command gated flow, new files only (old scripts untouched):
+> ```bash
+> bash collect_200hz.sh --smoke     # 60 s rehearsal through ALL gates
+> bash collect_200hz.sh             # the real 900 s run (seed-42 trajectory)
+> ```
+> The script gates everything before the arm moves (env, FTDI latency_timer → 1 ms,
+> topic-rate ≥ 150 Hz) and verdicts the CSV after (`check_collection.py`, validated
+> against the May run's known 46.7 Hz / 22 dropouts). New Tier-2 recorder
+> (`record_joint_states_200hz.py`): every message, header-stamp time base — the
+> runbook's throttle caveat is gone. Runbook: **`docs/COLLECTION_200HZ.md`** (top
+> section); excitation-conditioning (Tier 3) remains deferred.
 
 This is the "where was I / what's next" anchor. For depth: `CHANGELOG.md` (dated
 log), `THESIS_NOTES.md` (discussion), `PAPER_SUMMARY.md` (the paper).

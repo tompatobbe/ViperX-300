@@ -264,3 +264,40 @@ velocity register's fixed ~2-sample lag becomes a much smaller fraction of the s
 period. A higher-rate re-collection is therefore the single change that addresses the
 preprocessing limits *and* the per-link-inertia under-identification (see the
 "excitation" open-question entry above) at once — the recommended next experiment.
+
+## Recorder instrumentation for the 200 Hz collection (2026-06-11)
+
+For the 200 Hz re-collection a new recorder (`record_joint_states_200hz.py`) was
+written rather than reusing `record_joint_states.py`. The original is kept untouched
+(reproducibility of past runs); the new one changes three things, each defensible to
+an examiner as *instrumentation* fidelity — none of them touch the model or the
+identification pipeline:
+
+1. **Time base: publisher header stamp, not subscriber wall clock.** The old
+   recorder timestamped rows at callback execution time, which adds DDS transport +
+   executor scheduling jitter on top of the true sample time. That jitter matters
+   here specifically because q̇ and q̈ are obtained by *differentiating against the
+   time column*: an error ε in a timestamp perturbs the local dt and is amplified
+   twice on the way to q̈ — at 200 Hz (dt = 5 ms), a 1 ms scheduling delay is a 20 %
+   local dt error. `msg.header.stamp` is written by the driver's serial read loop,
+   i.e. as close to the actual sample instant as is available without firmware
+   changes. (Fallback to wall clock, loudly warned, if a driver does not stamp.
+   The arrival time is still recorded in a trailing `recv_time` column so the
+   stamp-vs-arrival jitter is auditable in the thesis.)
+2. **No throttle — every message is recorded.** The old recorder's rate throttle
+   compared each message against the last *written* row and could lock into
+   dropping every other message when recorder rate ≈ publish rate (the runbook
+   Step-4 caveat). Decimation, if ever wanted, belongs in analysis (`--stride`),
+   not at capture time: data discarded at capture is unrecoverable.
+3. **QoS matched to sensor data** (BEST_EFFORT, KEEP_LAST 50). A BEST_EFFORT
+   subscription is compatible with either publisher reliability setting, and the
+   deeper queue (~250 ms at 200 Hz) rides out transient subscriber stalls instead
+   of silently dropping the newest messages.
+
+The raw-data principle is preserved: the recorder writes what the driver reports,
+unmodified (dropout sentinels included — it *counts* them live but does not remove
+them; removal remains the analysis-side `--drop-glitches` decision). Likewise the
+collection still uses the unmodified `run_trajectories.py` excitation (seed 42) that
+produced the delivered model, so a rate-only comparison between the 47 Hz and 200 Hz
+datasets stays clean: same excitation, same pipeline, different sample rate — the
+defensible A/B for the "was 47 Hz the bottleneck?" question.

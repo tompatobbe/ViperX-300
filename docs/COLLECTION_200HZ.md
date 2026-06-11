@@ -14,6 +14,33 @@ inertias (currently a regulariser blob) and pushing REL from 0.59 toward the pap
 
 ---
 
+## ⭐ One-command procedure (added 2026-06-11 — use this)
+
+The gates and steps below are now automated by **`collect_200hz.sh`** (new files
+only: `record_joint_states_200hz.py`, `check_topic_rate.py`, `check_collection.py`;
+nothing existing was modified). With the driver running in its own terminal
+(`ros2 launch interbotix_xsarm_control xsarm_control.launch.py robot_model:=vx300s`):
+
+```bash
+bash collect_200hz.sh --smoke     # 60 s end-to-end rehearsal through ALL gates
+bash collect_200hz.sh             # the real 900 s run
+```
+
+The script refuses to move the arm unless every gate passes, in this order:
+env check → FTDI latency_timer → 1 ms (sudo only if needed) → **topic-rate gate**
+(≥ 150 Hz, else abort) → recorder started & confirmed receiving → excitation
+trajectory (unmodified `run_trajectories.py`, **seed 42** — the delivered-model
+trajectory) → recorder stopped → `check_collection.py` PASS/FAIL verdict, then it
+prints the identify/validate commands. Output: `data/traj_run_200hz_<stamp>.csv`,
+logs in `data/logs/`. The new recorder records **every message** with the
+**header-stamp time base** (Tier 2 below, now done), which removes the Step-4
+throttle caveat entirely.
+
+Manual Steps 1–6 below remain as the reference / fallback procedure and for
+debugging a failed gate.
+
+---
+
 ## Root cause to fix
 
 The recorder (`record_joint_states.py`) is a **passive subscriber** — it cannot
@@ -78,6 +105,10 @@ ros2 topic hz /vx300s/joint_states
   cheap second gate.
 
 ## Step 4 — Recorder settings  ⚠ throttle caveat
+> **Superseded 2026-06-11:** this caveat applies to the old `record_joint_states.py`
+> only. The one-command flow uses `record_joint_states_200hz.py`, which has **no
+> throttle** (records every message) — nothing below is needed unless you fall back
+> to the old recorder.
 
 `record_joint_states.py` throttles by comparing each message to the **last written
 row's** time (`min_dt = 1/rate`). If you set the recorder `--rate` *equal* to the
@@ -104,6 +135,11 @@ for a 200 Hz topic, `min_dt ≈ 3.3 ms < 5 ms` spacing → nothing dropped).
 > use the message header timestamp, removing this caveat entirely.)
 
 ## Step 5 — Post-collection sanity checks (before trusting the run)
+
+> **Automated 2026-06-11:** `python3 check_collection.py data/<run>.csv
+> --min-rate 150 --expect-duration 900` performs all of this (plus effort-column,
+> empty-cell, and coverage checks) with a PASS/FAIL exit code; `collect_200hz.sh`
+> runs it for you. The snippet below remains for manual inspection.
 
 On the new CSV, confirm the rate and timing are actually clean:
 ```bash
@@ -140,10 +176,11 @@ off the regulariser blob and narrows the unconstrained↔feasible gap.
 
 ## Open items deferred (not part of this runbook)
 
-- **Tier 2 — recorder fidelity:** use `msg.header.stamp` for the time column,
+- ~~**Tier 2 — recorder fidelity:** use `msg.header.stamp` for the time column,
   `qos_profile_sensor_data` (BEST_EFFORT, to match the publisher and avoid silent
   drops), and record every message (drop the throttle). Directly improves `q̈`
-  quality and removes the Step-4 caveat.
+  quality and removes the Step-4 caveat.~~ **Done 2026-06-11** —
+  `record_joint_states_200hz.py` (see THESIS_NOTES "Recorder instrumentation").
 - **Tier 3 — excitation:** make the trajectory optimizer minimise `cond(Φ_b)` of the
   actual base regressor (currently it minimises the condition number of a `[vel;accel]`
   matrix), and widen waist/forearm_roll coverage (~60 % of range last time). This is

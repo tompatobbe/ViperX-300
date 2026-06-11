@@ -9,6 +9,88 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-11 — 200 Hz collection tooling: gated one-command run (new files only)
+
+**Area:** data collection · new files `collect_200hz.sh`,
+`record_joint_states_200hz.py`, `check_topic_rate.py`, `check_collection.py` ·
+no existing file modified
+
+### Problem / Motivation
+The 200 Hz re-collection (`docs/COLLECTION_200HZ.md`) is the next experiment. The
+previous collection had known fault modes with **no guard** against any of them:
+1. Topic published ~47 Hz instead of 200 (FTDI `latency_timer` 16 ms) — discovered
+   only *after* the 900 s run was spent.
+2. Recorder-throttle halving trap (runbook Step-4 caveat): recorder `--rate` ≈
+   publish rate can drop every other message (throttle compares against the last
+   *written* row).
+3. Recorder/trajectory coverage mismatch: `run_trajectories.sh` gives both the same
+   `--duration`, but the trajectory starts ~40 s later (SLSQP optimiser + home move),
+   so the recorder can die before the trajectory ends — the delivered CSV spans
+   865.6 s of a 900 s request.
+4. No machine-checked verdict on a fresh CSV before identification effort is spent
+   on it.
+
+### Change
+Four new files; past runs and config hashes are untouched:
+- **`collect_200hz.sh`** — one-command gated run. Order: (1) env check (rclpy +
+  interbotix imports, auto-sources ROS/workspace if needed); (2) FTDI
+  `latency_timer` → 1 ms (sudo only if ≠ 1; warns and defers to the rate gate if
+  sysfs is missing); (3) **topic-rate gate** — refuses to start below `--min-rate`
+  (default 150 Hz); (4) recorder in background with `duration + 360 s` slack (covers the SLSQP
+  optimiser + home move; recorder is stopped early when the trajectory exits),
+  waits for its first-message sentinel; (5) the **unmodified, proven**
+  `run_trajectories.py` with `--rate 200 --seed 42 --stride 4` — the same SLSQP
+  condition-number-optimised Eq. 7 excitation that produced the delivered model;
+  recorder is SIGINT-stopped when the trajectory exits (fixes fault 3);
+  (6) `check_collection.py` verdict, then prints the identify/validate commands.
+  `--smoke` = 60 s end-to-end rehearsal through identical gates.
+- **`record_joint_states_200hz.py`** — Tier-2 recorder, pulled forward from the
+  runbook's deferred list (a new file was being written anyway, and keeping the
+  throttle foot-gun in new code would be a deliberate fault): records **every**
+  message (no throttle → Step-4 caveat gone), `time` column from
+  **`msg.header.stamp`** (driver's sample clock; wall-clock fallback with a loud
+  warning if stamps are zero), BEST_EFFORT/KEEP_LAST-50 QoS, watchdogs
+  (first-message timeout → exit 1, mid-run stall warning, duration+30 s hard stop),
+  live dropout-sentinel counter, extra trailing `recv_time` column (arrival wall
+  time, for jitter diagnostics).
+- **`check_topic_rate.py`** — scriptable runbook Step-3 gate: measures the actual
+  topic rate for 5 s, reports arrival-dt and header-stamp health, exit code 0/1/2.
+- **`check_collection.py`** — runbook Step-5 verdict as a gate: median rate,
+  dt jitter/gaps, dropout-sentinel rows, empty cells, dead effort columns, span vs
+  expected, per-joint motion coverage; exit 0 = usable, 1 = do not identify.
+
+### Evidence
+- CSV-format compatibility: `sysid_feasible.load_and_filter` (reused by
+  `compare_urdf_performance.py`) selects columns **by name**, so the extra
+  `recv_time` column is invisible to the pipeline; `time` keeps its
+  seconds-from-first-sample semantics.
+- `check_collection.py` validated against the delivered run
+  (`traj_run_20260518_143818.csv`): reproduces the known ground truth — median
+  46.7 Hz, span 865.6 s, **exactly 22 dropout-sentinel rows** — FAILs at the
+  150 Hz gate and PASSes with `--min-rate 40`, exercising both exit paths.
+- `bash -n` / `py_compile` clean. The rclpy code mirrors the proven
+  `record_joint_states.py` structure (plain subscriber + `spin_once` loop +
+  signal flag); hardware-facing paths can only run in the lab — which is what
+  `--smoke` rehearses.
+
+### Impact
+- Lab procedure: `bash collect_200hz.sh --smoke`, inspect, then
+  `bash collect_200hz.sh`. Logs land in `data/logs/<run>.{recorder,trajectory}.log`.
+- No existing artifact, script, or config hash affected (new files only; new CSVs
+  are `traj_run_200hz_<stamp>.csv`).
+- New CSVs gain `recv_time` and a header-stamp time base; downstream pipeline
+  unchanged.
+
+### Open questions / assumptions
+- Assumes the xs_sdk stamps `/vx300s/joint_states`; if not, the recorder falls back
+  to wall clock (warned), and `check_topic_rate.py` reports stamp health before
+  anything moves.
+- Latency-timer step resolves `/dev/ttyDXL` (or a single usb-serial device); when
+  ambiguous it warns and lets the rate gate decide — the gate is authoritative.
+- Smoke CSVs (`smoke_200hz_*.csv`) are rehearsal-only, not identification inputs.
+
+---
+
 ## 2026-06-11 — Two opt-in data-conditioning improvements (glitch drop + measured velocity)
 
 **Area:** `sysid_feasible.py` (`load_and_filter`, `run_identification`, CLI) · data
