@@ -9,6 +9,54 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-12 — Cross-validation matrix: delivered model passes held-out; 200 Hz re-id regresses
+
+**Area:** `compare_urdf_performance.py` (new `--drop-glitches` flag) · validation
+methodology · identification results
+
+### Problem / Motivation
+With the 200 Hz dataset in hand, two questions: (1) does the delivered May model
+(`cfg-640cb8ef`) survive held-out validation — the project's standing credibility
+gap; (2) does re-identifying on 200 Hz data improve the model?
+
+### Change
+`compare_urdf_performance.py` gained `--drop-glitches` (plumbed to the existing
+`load_and_filter` support). Without it, sentinel dropout rows smear spurious q̈
+spikes through the filter and dominate RMSE: the first (contaminated) held-out
+run returned a misleading "61 % worse" verdict with RMSE/MAE ≈ 8 and R² ≈ −3300
+on the waist. New 200 Hz identification artifact: `cfg-a92e984c` (recipe
+unchanged + `--stride 4 --drop-glitches`; stride 4 keeps W within WSL2 RAM —
+subsampling happens after 200 Hz filtering/differentiation, so q̈ quality is
+preserved).
+
+### Evidence — the matrix (friction-fitted mean RMSE / MAE [Nm], `--drop-glitches`)
+| model \ data | May 47 Hz | 200 Hz |
+|---|---|---|
+| factory vx300s.urdf | 2.066 / 0.649 | 0.719 / 0.569 |
+| May model (delivered) | 0.645 / 0.355 (held-in) | **0.438 / 0.313 (held-out)** |
+| new 200 Hz model | 2.355 / 0.488 (held-out) | 0.460 / 0.323 (held-in) |
+
+### Impact
+- **The delivered model is now cross-validated** (better held-out than held-in,
+  +0.52 mean R², 39 % ahead of factory on unseen data). Control phase proceeds
+  on it unchanged.
+- **200 Hz re-identification under the unchanged recipe is strictly dominated**
+  (worse than the May model even on its own training data). Root-cause
+  hypothesis (reflected actuator inertia absorbed into link inertias, degrading
+  cross-axis coupling — see THESIS_NOTES "Cross-run validation and the 200 Hz
+  re-identification puzzle") defines the next identification experiment:
+  per-joint motor-inertia term `Ia·q̈` in the regressor + γ sweep.
+- Earlier same-day validation numbers (and the 2026-06-10 FINAL entry's
+  0.822/2.682) were computed **without** glitch dropping; cite the matrix above
+  going forward.
+
+### Open questions / assumptions
+- Motor-inertia hypothesis untested; `Ia` extension not yet implemented.
+- The May CSV's waist channel keeps strongly negative R² for all models even
+  glitch-dropped (residual single-joint glitches?) — minor, but unexplained.
+
+---
+
 ## 2026-06-12 — First lab day at 200 Hz: rate fix, three collapses, anti-burst pacing fix
 
 **Area:** driver config (`interbotix_xsarm_control/config/vx300s.yaml`, outside repo) ·

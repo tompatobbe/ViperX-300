@@ -208,6 +208,9 @@ def main():
     p.add_argument("--friction", action="store_true",
                    help="also report errors with per-joint friction fitted")
     p.add_argument("--plot", action="store_true", help="save a torque comparison plot")
+    p.add_argument("--drop-glitches", action="store_true",
+                   help="remove all-joints=−π sync-read dropout rows before "
+                        "filtering (same flag as sysid_feasible)")
     args = p.parse_args()
 
     print("=" * 64)
@@ -218,7 +221,8 @@ def main():
     print(f"  B    : {args.urdf_b}")
 
     # Identical pipeline to identification: filter, derivatives, effort→Nm.
-    t, q, dq, ddq, tau_meas = load_and_filter(args.csv, fc=args.fc, stride=args.stride)
+    t, q, dq, ddq, tau_meas = load_and_filter(args.csv, fc=args.fc, stride=args.stride,
+                                              drop_glitches=args.drop_glitches)
     print(f"  samples: {len(t)}   duration: {t[-1]:.1f} s")
 
     tau_a, name_a = predict_torques(args.urdf_a, q, dq, ddq)

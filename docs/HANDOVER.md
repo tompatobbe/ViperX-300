@@ -3,18 +3,23 @@
 **Last updated:** 2026-06-12. **Phase:** identification **COMPLETE**
 → **control** (a validated, control-ready URDF now exists).
 
-> **2026-06-12 — the 200 Hz dataset is collected:**
-> `data/traj_run_200hz_20260612_131613.csv` (185 238 rows, 927.8 s, 199.7 Hz,
-> check_collection PASS). Getting there took a day of failure forensics — five
-> arm collapses root-caused to a loose 12 V brick→power-hub connection sagging
-> under load (full story: CHANGELOG 2026-06-12; diagnostic tool `volt_watch.py`
-> is reusable). Driver config now publishes 200 Hz (`vx300s.yaml` update_rate
-> 50→200, in the interbotix workspace, outside this repo); `run_trajectories.py`
-> gained an anti-burst schedule-shift on comm stalls. **Next: identify on the
-> 200 Hz run, validate held-in AND held-out vs the May run** — does REL drop
-> toward the paper's 0.43, and do the inertias lift off the regulariser blob?
-> Power headroom is thin (9.7 V min); secure the connector before long
-> control-phase campaigns.
+> **2026-06-12 — the delivered model is now CROSS-VALIDATED; control phase is
+> unblocked.** The 200 Hz dataset was collected
+> (`data/traj_run_200hz_20260612_131613.csv`, 185 238 rows, 199.7 Hz, PASS)
+> after a day of failure forensics — five arm collapses root-caused to a loose
+> 12 V brick→power-hub connection sagging under load (CHANGELOG 2026-06-12;
+> `volt_watch.py` is the reusable diagnostic; driver `vx300s.yaml` update_rate
+> 50→200 outside this repo; `run_trajectories.py` gained anti-burst pacing).
+> The full cross-validation matrix (CHANGELOG table) then showed: **the May
+> model scores 0.438 RMSE / 0.313 MAE held-out** on the unseen 200 Hz data —
+> better than its held-in numbers, 39 % ahead of factory — while re-identifying
+> on the 200 Hz data under the unchanged recipe is *strictly dominated*
+> (suspected unmodeled reflected actuator inertia; see THESIS_NOTES). **Next:
+> either start the control phase on the validated `cfg-640cb8ef` model, or run
+> the motor-inertia identification experiment (`Ia·q̈` term + γ sweep) on the
+> 200 Hz data.** Power headroom is thin (9.7 V min under load); secure the
+> brick→PHB connector before long campaigns. Use `--drop-glitches` in all
+> validations from now on.
 
 > **2026-06-11 note — preprocessing investigated, delivered model unchanged.** Added
 > two opt-in flags to `sysid_feasible.py` (`--drop-glitches`, `--use-measured-vel`,

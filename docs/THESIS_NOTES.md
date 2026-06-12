@@ -301,3 +301,54 @@ collection still uses the unmodified `run_trajectories.py` excitation (seed 42) 
 produced the delivered model, so a rate-only comparison between the 47 Hz and 200 Hz
 datasets stays clean: same excitation, same pipeline, different sample rate — the
 defensible A/B for the "was 47 Hz the bottleneck?" question.
+
+## Cross-run validation and the 200 Hz re-identification puzzle (2026-06-12)
+
+**The experiment.** With the 200 Hz dataset collected
+(`traj_run_200hz_20260612_131613.csv` — same seed-42 excitation, same pipeline,
+4× the sample rate of the May run), we ran the full cross-validation matrix:
+{factory `vx300s.urdf`, delivered May model `cfg-640cb8ef`, new 200 Hz model
+`cfg-a92e984c` (same recipe, `--stride 4 --drop-glitches`)} × {May data, 200 Hz
+data}, all with `compare_urdf_performance.py --friction --drop-glitches`
+(the flag was added to the validation harness this day; sentinel dropout rows
+otherwise smear spurious q̈ spikes through the zero-phase filter and dominate
+RMSE — they cost the earlier *contaminated* held-out run a misleading
+"61 % worse" verdict driven almost entirely by outliers, RMSE/MAE ≈ 8).
+
+**Results (friction-fitted mean RMSE / MAE, Nm):**
+
+| model \ data        | May 47 Hz run        | 200 Hz run            |
+|---------------------|----------------------|-----------------------|
+| factory vx300s.urdf | 2.066 / 0.649        | 0.719 / 0.569         |
+| May model (delivered)| 0.645 / 0.355 held-in| **0.438 / 0.313 held-out** |
+| new 200 Hz model    | 2.355 / 0.488 held-out| 0.460 / 0.323 held-in |
+
+**Finding 1 — the delivered model generalises.** Held-out on 15 min of unseen,
+cleaner data it beats its own held-in numbers (plausible: the 200 Hz q̈ is less
+noisy, so the *evaluation* is cleaner) and the factory model by 39 %. Mean R²
+is positive (+0.52). This is the dissertation's cross-validation evidence; the
+control phase proceeds on this model.
+
+**Finding 2 — re-identifying on the 200 Hz data under the unchanged recipe
+produced a worse model**, dominated even on its own training data (0.460 vs
+0.438). The new fit moved the upper-arm inertias from blob scale to
+0.17–0.2 kg·m² and acquired a 0.46 m forearm CoM — and its waist-axis
+prediction degrades *everywhere* (held-in waist R² −4.95 vs factory +0.47).
+
+**Interpretation (hypothesis, untested).** The 47 Hz data low-passed away most
+genuine acceleration-correlated torque, so inertia-direction parameters were
+regulariser-dominated. The 200 Hz data restores that signal, and the fit
+attributes it to *link* inertia. But the physically dominant acceleration-
+correlated effect at the joint is likely **reflected actuator inertia**
+(rotor + gearhead at ≈270:1; τ_measured accelerates the rotor too), which is
+*local to each joint axis*. A rigid-body parameterisation can only absorb it
+by inflating link inertia, which then couples (wrongly) into other axes via
+RNEA — precisely the observed waist degradation. The standard remedy is a
+per-joint diagonal motor-inertia term `Ia·q̈ᵢ` in the regressor (linear in the
+parameter, Ia ≥ 0; fits the SDP structure unchanged). This is the natural next
+identification experiment, alongside a γ sweep to check how much of the
+inertia inflation is regularisable away.
+
+**Status.** Deliverable unchanged (May model, now cross-validated). The 200 Hz
+dataset stands as the better validation set and the substrate for the
+motor-inertia experiment.
