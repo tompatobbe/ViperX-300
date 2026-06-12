@@ -4,7 +4,7 @@
 # 2026-06-12). Recipe = the delivered-model settings (HANDOVER), plus
 # --stride 4 (subsamples AFTER 200 Hz filtering/differentiation; keeps W
 # small enough for WSL2 RAM) and --drop-glitches (33 sentinel rows).
-set -euo pipefail
+set -eo pipefail
 cd "$(dirname "$0")"
 
 CSV=data/traj_run_200hz_20260612_131613.csv

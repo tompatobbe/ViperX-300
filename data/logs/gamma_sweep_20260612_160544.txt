@@ -1,0 +1,1 @@
+γ=0.1  held-in=0.437  held-out=0.807  upper_arm:   upper_arm_link     0.004277     0.004661     0.004622
