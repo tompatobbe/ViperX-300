@@ -13,7 +13,7 @@ Physically-feasible **dynamic model identification** of the Trossen Robotics
 > constrained control of robotic arms: A case study on the ViperX-300 6-DoF
 > robotic manipulator"*, **Mechatronics 112 (2025) 103419**.
 
-The full paper text is at **`Paper.txt`** (~14.5k tokens, full incl. ERG control
+The full paper text is at **`docs/Paper.txt`** (~14.5k tokens, full incl. ERG control
 §4–5 and references). **Do not load it for routine context** — read the
 condensed **`docs/PAPER_SUMMARY.md`** instead
 (method, equations, constraints, limits, benchmark REL values). Only open

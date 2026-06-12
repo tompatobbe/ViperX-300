@@ -9,6 +9,63 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-13 — Workspace reorganisation: pipeline at root, everything else categorised
+
+**Area:** repository layout only — **no code, results, or methodology changed**
+
+### Problem / Motivation
+The repo root had accumulated ~35 scripts; the active pipeline was buried among
+superseded sysid variants, May-era collection scripts, one-off diagnostics, and
+scratch files. Goal: root shows the working pipeline, the rest is categorised
+but preserved (traceability — examiners may ask about earlier attempts).
+
+### Change (all moves via `git mv`, history preserved)
+- **Root now holds only the active pipeline**: `sysid_feasible.py`,
+  `phi_to_urdf.py`, `compare_urdf_performance.py`, `pipeline_artifacts.py`,
+  `run_trajectories.py`, `record_joint_states_200hz.py`, `check_collection.py`,
+  `check_topic_rate.py`, `collect_200hz.sh`, `identify_200hz.sh`,
+  `sweep_gamma.sh`.
+- **`tools/`** (working utilities off the critical path): `volt_watch.py`,
+  `diagnose_comm.py`, `diagnose_syncread.py`, `diagnose_phi.py`,
+  `monitor_servos.py`, `test_waist_current.py`, `plot_arm_data.py`,
+  `plot_simple.py`, `visualize_arm_data.py`.
+- **`archive/identification/`** (pre-SDP sysid variants): `sysid_paper.py`,
+  `sysid_fast.py`, `sysid_subsample.py`, `sysid_19th.py`,
+  `sysid_feasible_original.py`, `run_sysid_{cur,pos,pos_paper}.py`, plus
+  `dynamic_model.py` (moved from `trash/`, it is `sysid_paper.py`'s import).
+- **`archive/collection/`** (May-era 47 Hz flow): `record_joint_states.py`,
+  `run_trajectories.sh`, `collect_arm_data.py`,
+  `collect_joint_torque_vel_accel.py`, `collect_sysid_pos.sh`,
+  `record_arm_data_manual_movement.py`, `record_joint3_test.py`.
+- **`archive/scratch/`**: `test.py`, `test2.py`, former `trash/` contents,
+  `self_host/` (unrelated LLM experiments). **`archive/npy/`**: the legacy
+  `npy/` phi files (already migrated to `outputs/legacy/` by
+  `pipeline_artifacts.migrate_legacy`).
+- `Paper.txt` → `docs/Paper.txt` (references in CLAUDE.md / PAPER_SUMMARY.md
+  updated). README.md rewritten (was May-era stale — it still recommended
+  `pip install pin`, the documented gotcha). Added `.gitignore`
+  (`__pycache__/`, `*.pyc`, `.pytest_cache/`) and untracked the 12 committed
+  `.pyc` files.
+
+### Evidence nothing broke
+- Reference map checked before moving: the active root cluster references only
+  itself; archived scripts reference only each other (`record_joint_states.py`
+  is functionally used only by the archived `run_trajectories.sh`; mentions in
+  active files are docstrings).
+- Post-move: core modules import cleanly; `bash -n` passes on all three root
+  `.sh` scripts; `pytest tests/` 43/43 pass. (`run_trajectories.py` import
+  fails only on missing `interbotix_xs_modules` — pre-existing; lab machine
+  only.) `COLLECTION_200HZ.md` mentions of old scripts are all in sections
+  already marked superseded.
+
+### Impact
+- No re-runs needed; artifact paths (`data/`, `outputs/`) unchanged.
+- Historical CHANGELOG/THESIS_NOTES entries cite old root paths (e.g.
+  `volt_watch.py`, now `tools/volt_watch.py`) — left as written; they are
+  records of their date. This entry is the path map.
+
+---
+
 ## 2026-06-12 (evening) — Replicate 200 Hz run, γ sweep, matrix completed: the 200 Hz defect is structural → motor-inertia term next
 
 **Area:** data collection (replicate run) · identification methodology (γ sweep,

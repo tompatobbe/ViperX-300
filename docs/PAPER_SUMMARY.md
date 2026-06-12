@@ -1,7 +1,7 @@
 # Paper summary — condensed reference
 
 Compact summary of the method this project implements, so the full text
-(`Paper.txt`, ~8k tokens) does **not** need to be loaded for routine context.
+(`docs/Paper.txt`, ~8k tokens) does **not** need to be loaded for routine context.
 Read this first; open `Paper.txt` only when you need exact wording, a proof, or
 a number not captured here.
 
