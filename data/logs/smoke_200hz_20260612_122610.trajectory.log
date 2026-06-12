@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/tobbe/Vx300s/run_trajectories.py", line 52, in <module>
+    VEL_MAX   = np.array([3.14, 3.14, 3.14, 3.14, 3.14, 3.14]/2)   # rad/s
+TypeError: unsupported operand type(s) for /: 'list' and 'int'

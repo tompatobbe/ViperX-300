@@ -272,8 +272,9 @@ def main() -> None:
           f'moving_time={moving_time:.3f}s  accel_time={accel_time:.3f}s')
 
     print('[run] Executing excitation trajectory — Ctrl+C to stop early …')
-    t_start = time.monotonic()
-    n_sent  = 0
+    t_start  = time.monotonic()
+    n_sent   = 0
+    n_stalls = 0
 
     try:
         for i in range(0, n, args.stride):
@@ -287,6 +288,17 @@ def main() -> None:
             remaining = t_sched - time.monotonic()
             if remaining > 0.0:
                 time.sleep(remaining)
+            elif -remaining >= 2.0 * cmd_dt:
+                # ≥2 command intervals behind schedule — a comm stall
+                # (70–280 ms publisher gaps observed over usbipd/WSL2,
+                # 2026-06-12). Bursting the backlog at full speed commands
+                # a violent multi-joint catch-up jerk; shift the schedule
+                # instead so the trajectory resumes seamlessly from the
+                # next waypoint, merely finishing late by the stall time.
+                t_start  += -remaining
+                n_stalls += 1
+                print(f'[run] WARNING: {-remaining*1e3:.0f} ms stall — '
+                      f'schedule shifted (total stalls: {n_stalls})')
 
             bot.arm.set_joint_positions(
                 q.tolist(),
@@ -301,7 +313,7 @@ def main() -> None:
 
     elapsed = time.monotonic() - t_start
     print(f'[run] {n_sent} commands in {elapsed:.1f}s '
-          f'(≈{n_sent / elapsed:.1f} Hz achieved)')
+          f'(≈{n_sent / elapsed:.1f} Hz achieved, {n_stalls} stall(s) absorbed)')
 
     print('[run] Returning to sleep pose …')
     bot.gripper.release(delay=0.5)

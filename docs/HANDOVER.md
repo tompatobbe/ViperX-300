@@ -1,7 +1,20 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-11. **Phase:** identification **COMPLETE**
+**Last updated:** 2026-06-12. **Phase:** identification **COMPLETE**
 → **control** (a validated, control-ready URDF now exists).
+
+> **2026-06-12 — the 200 Hz dataset is collected:**
+> `data/traj_run_200hz_20260612_131613.csv` (185 238 rows, 927.8 s, 199.7 Hz,
+> check_collection PASS). Getting there took a day of failure forensics — five
+> arm collapses root-caused to a loose 12 V brick→power-hub connection sagging
+> under load (full story: CHANGELOG 2026-06-12; diagnostic tool `volt_watch.py`
+> is reusable). Driver config now publishes 200 Hz (`vx300s.yaml` update_rate
+> 50→200, in the interbotix workspace, outside this repo); `run_trajectories.py`
+> gained an anti-burst schedule-shift on comm stalls. **Next: identify on the
+> 200 Hz run, validate held-in AND held-out vs the May run** — does REL drop
+> toward the paper's 0.43, and do the inertias lift off the regulariser blob?
+> Power headroom is thin (9.7 V min); secure the connector before long
+> control-phase campaigns.
 
 > **2026-06-11 note — preprocessing investigated, delivered model unchanged.** Added
 > two opt-in flags to `sysid_feasible.py` (`--drop-glitches`, `--use-measured-vel`,

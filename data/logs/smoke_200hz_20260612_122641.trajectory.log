@@ -1,0 +1,34 @@
+[optimizer] Running SLSQP optimisation (≈ fmincon active-set) …
+[optimizer] converged — condition number: 1.000
+[run] Trajectory statistics:
+      f_l=0.1 Hz  ω_l=0.6283 rad/s  N_f=5
+      Freq range: 0.628 – 3.142 rad/s
+      Joint              Pos/lim (rad)   Vel/lim (rad/s)   Acc/lim (rad/s²)
+      waist            0.998/2.80     1.093/1.57     1.844/5.00
+      shoulder         0.739/0.90     1.090/1.57     2.087/5.00
+      elbow            0.597/0.60     0.985/1.57     2.049/5.00
+      forearm_roll     0.985/1.50     1.290/1.57     2.201/5.00
+      wrist_angle      0.939/1.50     1.227/1.57     1.989/5.00
+      wrist_rotate     1.106/2.80     1.253/1.57     2.057/5.00
+[run] Pre-computing 12000 waypoints (60 s @ 200 Hz) …
+[run] Connecting to "vx300s" …
+[INFO] [1781260012.834062229] [interbotix_robot_manipulation]: Initialized InterbotixRobotNode!
+[INFO] [1781260012.874901925] [interbotix_robot_manipulation]: 
+	Robot Name: vx300s
+	Robot Model: vx300s
+[INFO] [1781260012.875318462] [interbotix_robot_manipulation]: Initialized InterbotixRobotXSCore!
+[INFO] [1781260012.881253007] [interbotix_robot_manipulation]: 
+	Arm Group Name: arm
+	Moving Time: 2.00 seconds
+	Acceleration Time: 0.30 seconds
+	Drive Mode: Time-Based-Profile
+[INFO] [1781260012.881774681] [interbotix_robot_manipulation]: Initialized InterbotixArmXSInterface!
+[INFO] [1781260013.389726599] [interbotix_robot_manipulation]: 
+	Gripper Name: gripper
+	Gripper Pressure: 50.0%
+[INFO] [1781260013.390246339] [interbotix_robot_manipulation]: Initialized InterbotixGripperXSInterface!
+[run] Moving to HOME position …
+[run] Closing gripper …
+[run] Waiting 1 s — ensure recorder is running …
+[run] Effective command rate: 50.0 Hz  moving_time=0.080s  accel_time=0.020s
+[run] Executing excitation trajectory — Ctrl+C to stop early …

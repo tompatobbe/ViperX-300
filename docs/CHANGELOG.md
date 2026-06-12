@@ -9,6 +9,100 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-12 — First lab day at 200 Hz: rate fix, three collapses, anti-burst pacing fix
+
+**Area:** driver config (`interbotix_xsarm_control/config/vx300s.yaml`, outside repo) ·
+`run_trajectories.py` command pacing · data collection
+
+### Problem / Motivation
+First on-site attempt at the 200 Hz collection (runbook `COLLECTION_200HZ.md`).
+Two distinct problems surfaced:
+
+1. **Topic-rate gate failed at exactly 50.0 Hz** despite `latency_timer` = 1 ms.
+   Root cause was **not** the FTDI timer (the runbook's prime suspect): the
+   interbotix driver config `vx300s.yaml` caps `joint_state_publisher:
+   update_rate: 50` — uniquely among all models (others ship 100). This also
+   retro-explains the May run's ~47 Hz (50 Hz cap minus 16 ms-latency losses).
+2. **Three consecutive smoke runs collapsed** (arm fell mid-trajectory) after
+   the rate fix: `smoke_200hz_20260612_{114256,121101,122641}.csv`.
+
+### Evidence (collapse forensics, from the 200 Hz CSVs)
+- In every run: ~70 ms publisher stalls at ≈1 s and ≈9 s after motion start,
+  then a **fatal 144–276 ms stall at ≈16 s**, after which **all motors except
+  the waist read 0 mA** (torque off) and the arm falls (shoulder −4 rad/s into
+  its hard stop). The waist — first in the power daisy-chain — stays
+  torque-enabled, jams against the fallen arm at stall current (~5.4 A,
+  ≈13 Nm), and trips its own overload ~5 s later. The big waist spike is
+  therefore an *effect*, not the cause.
+- **Falsified: mechanical overload** — pre-event currents ≤ 0.84 A (~10–15 %
+  of capacity), no spike before cutoff at 5 ms resolution.
+- **Falsified: posture-triggered** — run 3 (halved VEL/ACCEL limits ⇒
+  different optimized trajectory) failed at the same *relative time* in a
+  different posture, never visiting the waist extreme.
+- **Environment**: the U2D2 runs over usbipd/vhci (USB-over-IP into WSL2;
+  `dmesg`: `vhci_hcd`, one FTDI `urb stopped: -32`). No USB re-enumeration
+  during failures. The May 865 s run (different machine/path) has zero stalls.
+- **Suspected mechanism**: the pacing loop in `run_trajectories.py` only slept
+  when *ahead* of schedule; after a stall it **burst the backlog** (~14
+  waypoints at `moving_time=0.08`) — a violent multi-joint catch-up jerk
+  (run 1: waist measured 2.6 rad/s > commanded profile). Hypothesis: the
+  simultaneous inrush dips the supply and reboots the downstream motors
+  (2–9), while the waist (first in chain) rides through. Pending confirmation
+  via driver log / `Hardware_Error_Status` registers.
+
+### Change
+- `vx300s.yaml` (driver config): `update_rate` 50 → 200. Verified 196.1 Hz
+  effective with clean header-stamp timing — the runbook's Tier-1 goal is met.
+- `run_trajectories.py`: on falling ≥ 2 command intervals behind schedule, the
+  schedule start is shifted by the deficit instead of bursting stale waypoints
+  (trajectory resumes seamlessly, finishing late by the stall time); stalls are
+  counted and printed. Waypoint generation is untouched. VEL_MAX/ACCEL_MAX
+  restored to 3.14 / 10.0 after the halved-limits diagnostic run.
+
+### Impact
+- 200 Hz collection is viable; smoke must be re-run to confirm the anti-burst
+  fix prevents the collapse. If the collapse persists *without* a command
+  burst, the cause is purely electrical (PSU sag / chain cabling) and the
+  stalls are a symptom, not a trigger.
+- The seed-42 waypoints are unchanged (same coefficients), so the excitation
+  remains comparable to the delivered-model trajectory.
+
+### Resolution (same day) — root cause confirmed: power-path voltage sag
+The anti-burst fix absorbed stalls but a 5th run still collapsed ⇒ command
+path exonerated entirely. A 100 s passive listen with the arm **idle** showed
+200 Hz with *zero* gaps ⇒ host/USB path exonerated; stalls occur only under
+motor load. A live `Present_Input_Voltage` poller (**`volt_watch.py`**, new
+diagnostic; logs in `data/logs/voltwatch_*.log`) then provided the smoking
+gun: 11.9–12.1 V at idle, but **9.8–10.2 V under dynamic load** and **8.7 V
+while the power connector was handled** — vs the XM540's 9.5 V operating
+floor. Root cause: a **resistive/loose connection where the 12 V/20 A brick
+feeds the U2D2 power-hub board**, sagging ~2 V under load; deep sags
+brown out and reboot the motors furthest down the power chain (everything
+but the waist), which is the observed collapse. The shallow sags are the
+~70 ms publisher stalls. After reseating the connector, the full smoke
+**PASSED** (`smoke_200hz_20260612_130906.csv`, 198.9 Hz effective, 86 s,
+check_collection PASS) with one absorbed 126 ms stall and dips bottoming at
+9.8 V — *still marginal*: the connector must be mechanically secured before
+the 900 s run (15 min of vibration).
+
+**The 900 s collection then succeeded**: `data/traj_run_200hz_20260612_131613.csv`
+— 185 238 rows, 927.8 s, 199.7 Hz effective, 1 absorbed stall, 33 sentinel
+rows (0.018 %), check_collection **PASS**. volt_watch over the full run:
+min 9.7 V (never below the 9.5 V floor), worst dips during gripper grasp +
+trajectory spin-up — which retroactively explains why all collapses occurred
+in that early high-demand window. The paper-rate dataset for identification
+now exists; supply headroom remains thin (~0.2 V at worst), so secure the
+brick→PHB connection (screw terminals) before the control-phase campaigns.
+
+### Open questions / assumptions
+- Power headroom is still thin (9.8 V min under load post-reseat). If stalls/
+  sentinels persist in the real run, the barrel-jack→PHB joint needs a proper
+  fix (screw terminals / re-crimp), not another reseat.
+- Source of the recurring ~7–8 s spacing between sags (suspected: recurring
+  high-demand phases of the f_l = 0.1 Hz excitation) not pinned down.
+
+---
+
 ## 2026-06-11 — 200 Hz collection tooling: gated one-command run (new files only)
 
 **Area:** data collection · new files `collect_200hz.sh`,
