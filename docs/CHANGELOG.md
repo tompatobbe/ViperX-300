@@ -9,6 +9,96 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-12 (evening) — Replicate 200 Hz run, γ sweep, matrix completed: the 200 Hz defect is structural → motor-inertia term next
+
+**Area:** data collection (replicate run) · identification methodology (γ sweep,
+`sweep_gamma.sh`) · validation results
+
+### Problem / Motivation
+The morning matrix (entry below) left two open questions: (1) is the 200 Hz
+collection *repeatable* — i.e. are model-to-model RMSE differences real or
+within run-to-run noise; (2) is the 200 Hz re-identification defect (upper-arm
+inertia inflation + waist degradation) *regularisable away* by the entropic
+weight γ, or *structural* (⇒ implement the `Ia·q̈` motor-inertia term)?
+
+### Change
+- **Second 200 Hz collection** `data/traj_run_200hz_20260612_161025.csv`
+  (185 000 rows, 926.9 s, 199.6 Hz, 25 sentinel rows, check_collection PASS,
+  2 stalls absorbed, worst gap 173 ms). Same seed-42 trajectory as the 13:16
+  run ⇒ a **replicate**, not an independent excitation; the May run remains the
+  only independent held-out set.
+- **`sweep_gamma.sh`**: γ ∈ {0.1, 0.2, 0.5, 1.0, 2.0} on the 13:16 CSV, recipe
+  otherwise unchanged (`--stride 4 --drop-glitches`, w2=100, CLARABEL). Bug fix
+  along the way: the sweep's output parsing died under `set -e` on artifact
+  **cache hits** (scripts print `[cache] …` instead of `Saved →`); path
+  extraction now matches both, and the upper-arm-inertia indicator is read from
+  the URDF file (not printed on cache hits).
+- **Replicate-CSV identification** under the γ=0.05 recipe (artifacts
+  `…161025__…cfg-a92e984c…`), plus the two missing matrix cells.
+
+### Evidence 1 — repeatability (friction-fitted mean RMSE [Nm], `--drop-glitches`)
+| model | 13:16 run | 16:10 replicate |
+|---|---|---|
+| factory vx300s.urdf | 0.719 | 0.707 |
+| May model `cfg-640cb8ef` | 0.438 | **0.438** |
+| 200 Hz 13:16 model (γ=0.05) | 0.460 (held-in) | 0.468 |
+
+Run-to-run drift ≤ 1.7 % (the May model reproduces to three decimals) ⇒ the
+collection is reproducible and differences ≳ 0.01 Nm between models are real.
+
+### Evidence 2 — γ sweep (13:16 CSV; targets: held-in < 0.438 **and** held-out < 0.645)
+| γ | held-in (200 Hz) | held-out (May) | upper-arm Ixx [kg·m²] |
+|---|---|---|---|
+| 0.05 | 0.460 | 2.355 | 0.051 |
+| 0.1 | 0.437 | 0.807 | 0.0043 |
+| 0.2 | 0.433 | **0.761** | 0.0024 |
+| 0.5 | 0.429 | 0.765 | 0.0021 |
+| 1.0 | 0.424 | 0.786 | 0.0020 |
+| 2.0 | **0.416** | 0.825 | 0.0020 |
+
+- **No γ meets the held-out bar** (best 0.761 at γ=0.2 vs required 0.645),
+  although every γ ≥ 0.1 matches or beats the May model held-in.
+- The inertia inflation itself **is** regularisable: by γ=0.5 the upper-arm
+  inertia sits at the blob floor (~0.002). But held-out is U-shaped and worsens
+  again past γ=0.5 while the dataset-specific torque **migrates into other
+  parameters** (shoulder F0 0.228→0.340 Nm, elbow F0 −0.886→−0.938 Nm as γ
+  rises). The inflated inertia was a symptom, not the disease: the 200 Hz data
+  contains real torque content that no feasible *link*-parameter assignment
+  represents without hurting generalisation.
+- Metric caveat: γ=2.0 has the best held-in RMSE (0.416) yet the *worst* mean
+  REL (0.670 vs 0.509 unconstrained) — REL and friction-fitted RMSE weight
+  joints differently; cite the RMSE matrix, not REL, for model comparisons.
+
+### Evidence 3 — matrix completion on the replicate (friction-fitted, `--drop-glitches`)
+- May model on the replicate: **0.438 / 0.309** (RMSE/MAE) — identical to the
+  13:16 run.
+- Replicate-identified γ=0.05 model held-in on its own data: **0.375 / 0.254**
+  — the best held-in fit of any model — but the **waist defect reproduces on
+  independent data**: waist RMSE 0.314, R² −2.90 (vs factory 0.133, +0.30).
+  Same structural signature as the 13:16-identified model (waist R² −7.1).
+
+### Impact
+- **Decision rule resolved: the defect is structural.** Per the standing plan
+  (THESIS_NOTES "Cross-run validation and the 200 Hz re-identification
+  puzzle"), the next identification experiment is the **per-joint reflected
+  motor-inertia term `Ia·q̈ᵢ`** in the regressor (6 new linear parameters,
+  Ia ≥ 0; SDP structure unchanged), then re-run the sweep/matrix.
+- The delivered May model `cfg-640cb8ef` remains the deliverable, now backed by
+  two independent 200 Hz validations (0.438 on both).
+- The 13:16 vs 16:10 pair gives the dissertation a clean **repeatability**
+  statement for the validation methodology.
+
+### Open questions / assumptions
+- Whether `Ia·q̈` absorbs the structural torque (and fixes the waist axis) is
+  the open experiment; if it does not, next suspects are friction model
+  richness (velocity-dependent beyond viscous+Coulomb) and excitation
+  conditioning (paper Eq. 11).
+- The torque migration into F0 with rising γ is observational; the mechanism
+  (why a *constant* offset trades against inertia terms here) is not pinned
+  down.
+
+---
+
 ## 2026-06-12 — Cross-validation matrix: delivered model passes held-out; 200 Hz re-id regresses
 
 **Area:** `compare_urdf_performance.py` (new `--drop-glitches` flag) · validation

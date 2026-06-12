@@ -21,13 +21,17 @@ for G in 0.1 0.2 0.5 1.0 2.0; do
     python3 sysid_feasible.py "$CSV" --no-plot --stride 4 --method cvxpy \
         --entropic "$G" --w2 100 --solver CLARABEL --drop-glitches \
         | tee /tmp/id_gamma.out
-    NPY=$(grep -oP 'Saved\s+→\s+\K\S+\.npy' /tmp/id_gamma.out | tail -1)
+    # Match the artifact path on both the "Saved → …" line and the bare path a
+    # "[cache] Artifact already exists" hit prints (cache hits exit 0 too).
+    NPY=$(grep -oP '\S*outputs/\S+\.npy' /tmp/id_gamma.out | tail -1)
 
     echo "════ γ=$G — export URDF ════"
     python3 phi_to_urdf.py "$NPY" | tee /tmp/urdf_gamma.out
-    URDF=$(grep -oP 'Wrote\s+→\s+\K\S+\.urdf' /tmp/urdf_gamma.out | tail -1)
-    # upper-arm inertia: the inflation indicator (May-model scale ≈ 0.04)
-    UA=$(awk '/upper_arm_link/ && NF>=4 {line=$0} END{print line}' /tmp/urdf_gamma.out)
+    URDF=$(grep -oP '\S*outputs/\S+\.urdf' /tmp/urdf_gamma.out | tail -1)
+    # upper-arm inertia: the inflation indicator (May-model scale ≈ 0.04).
+    # Read from the URDF itself — the stdout summary is absent on cache hits.
+    UA="upper_arm_link $(grep -A4 '<link name="upper_arm_link">' "$URDF" \
+        | grep -oP 'ixx="\K[^"]+|iyy="\K[^"]+|izz="\K[^"]+' | paste -sd' ')"
 
     echo "════ γ=$G — validate held-in (200 Hz) ════"
     IN=$(python3 compare_urdf_performance.py --friction --drop-glitches \

@@ -1,65 +1,51 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-12 (evening, after second 200 Hz run). **Phase:**
-identification **COMPLETE** → **control**, with one open identification
-experiment (γ sweep / motor inertia) running in parallel.
+**Last updated:** 2026-06-12 (late evening; γ sweep + matrix complete). **Phase:**
+identification **COMPLETE** → **control**, with one decided identification
+experiment queued: the **`Ia·q̈` motor-inertia term**.
 
-> **2026-06-12 evening — replicate 200 Hz run collected; γ sweep is the live
-> experiment, half-finished. Pick up here.**
+> **2026-06-12 late evening — γ sweep finished, matrix complete: the 200 Hz
+> defect is STRUCTURAL. Next concrete task: implement `Ia·q̈`. Pick up here.**
 >
-> **What happened after the cross-validation entry below:**
-> 1. **Second 200 Hz collection** `data/traj_run_200hz_20260612_161025.csv`
->    (185 000 rows, 926.9 s, 199.6 Hz, 25 sentinel rows, PASS; 2 stalls
->    absorbed, worst dt gap 173 ms). **Same seed-42 trajectory as the 13:16
->    run → it is a *replicate*, not an independent held-out set.** The May run
->    (`traj_run_20260518_143818.csv`) remains the only independent held-out.
-> 2. **Repeatability confirmed** (friction-fitted mean RMSE, `--drop-glitches`):
->    factory 0.719→0.707, 200 Hz model `cfg-a92e984c` 0.460 (held-in on 13:16)
->    →0.468 on the replicate. ~1.5 % drift ⇒ collection is reproducible;
->    differences >0.01 Nm between models are real. The a92e984c **waist defect
->    reproduced exactly** (RMSE 0.452, R² −7.1 vs factory 0.133/+0.30) —
->    structural, consistent with the inertia-inflation hypothesis.
-> 3. **γ sweep (`sweep_gamma.sh`, on the 13:16 CSV) ran only its first point**
->    before being interrupted for the collection. Result in
->    `data/logs/gamma_sweep_20260612_160544.txt`:
->    **γ=0.1 → held-in 0.437 (ties May's 0.438!), held-out 0.807** (vs 2.355 at
->    γ=0.05), upper-arm inertia deflated to ≈0.0046. γ is a real lever but 0.1
->    doesn't yet beat May held-out (0.645). **γ ∈ {0.2, 0.5, 1.0, 2.0} pending.**
-> 4. **Identification on the replicate CSV already ran** (γ=0.05 recipe;
->    artifacts `outputs/{npy,urdf}/traj_run_200hz_20260612_161025__…cfg-a92e984c…`).
->    Its upper-arm inertia is **inflated again** (ixx 0.051) — the artifact
->    reproduces on independent data. Its validation numbers were **not**
->    recorded; May-model-on-replicate also not yet run.
-> 5. Tooling: `identify_200hz.sh` now takes the CSV as optional `$1` and its
->    validation steps gained `--drop-glitches` (required for comparable
->    numbers). The `[warn] --fs=50.0 but CSV is 200.0 Hz` is benign —
->    `load_and_filter` overrides with the detected rate (`sysid_feasible.py:278`).
+> **What's now established** (full numbers: CHANGELOG "2026-06-12 (evening)"
+> entry; discussion: THESIS_NOTES "Resolution of the γ question"):
+> 1. **γ sweep done** (γ ∈ {0.05…2.0}, 13:16 CSV;
+>    `data/logs/gamma_sweep_*.txt`). **No γ dethrones the May model**: best
+>    held-out 0.761 (γ=0.2) vs the required 0.645, even though γ ≥ 0.1 beats
+>    May held-in (down to 0.416 at γ=2.0). The inertia inflation deflates to
+>    blob scale by γ=0.5, but the unexplained torque just migrates into F0
+>    offsets and held-out worsens again ⇒ **structural**, consistent with
+>    reflected actuator inertia.
+> 2. **Matrix complete on the replicate** (`…161025.csv`): May model scores
+>    **0.438** — identical to the 13:16 run; repeatability ~0.01 Nm. The
+>    replicate-identified γ=0.05 model gets the best-ever held-in (0.375) but
+>    reproduces the **broken waist axis** (R² −2.90 vs factory +0.30) on
+>    independent data.
+> 3. Delivered model **unchanged**: May `cfg-640cb8ef`, now validated on two
+>    independent 200 Hz collections. All evening docs are written (CHANGELOG,
+>    THESIS_NOTES); `sweep_gamma.sh` was fixed to survive artifact cache hits.
 >
-> **Next actions (at home, in order):**
-> ```bash
-> # 1. Finish the γ sweep (≈25 min/point; edit CSV= inside if you want the replicate)
-> bash sweep_gamma.sh
-> # 2. Complete the comparison matrix on the replicate CSV:
-> source /opt/ros/humble/setup.bash
-> python3 compare_urdf_performance.py --friction --drop-glitches \
->     --csv data/traj_run_200hz_20260612_161025.csv \
->     --urdf-b outputs/urdf/traj_run_20260518_143818__sysid_feasible-v1-4__cfg-640cb8ef__phi_to_urdf-v1-0__cfg-3ef0a00c.urdf
-> python3 compare_urdf_performance.py --friction --drop-glitches \
->     --csv data/traj_run_200hz_20260612_161025.csv \
->     --urdf-b outputs/urdf/traj_run_200hz_20260612_161025__sysid_feasible-v1-4__cfg-a92e984c__phi_to_urdf-v1-0__cfg-3ef0a00c.urdf
-> ```
-> **Decision rule:** a 200 Hz model dethrones the delivered May model only if it
-> beats **both** 0.645 held-out on May data **and** ≈0.44 on 200 Hz data. If no
-> γ achieves that, the inflation is structural → implement the **`Ia·q̈`
-> per-joint motor-inertia term** in the regressor (THESIS_NOTES "Cross-run
-> validation and the 200 Hz re-identification puzzle").
+> **Next actions (in order):**
+> 1. **Implement the per-joint motor-inertia term** in the `sysid_feasible.py`
+>    regressor: `τᵢ += Ia_i·q̈ᵢ` — 6 extra columns (one per joint, like the
+>    friction terms), parameters linear, constraint `Ia_i ≥ 0`; SDP structure
+>    unchanged. Bump `PIPELINE_VERSION`. Export note: `Ia` cannot live in a
+>    URDF link inertial — keep it sidecar metadata (like F0) for the
+>    controller.
+> 2. Re-run identification + the cross-validation matrix on the 200 Hz data
+>    (reuse `sweep_gamma.sh` machinery). **Success bar unchanged:** beat
+>    **0.438** held-in (200 Hz) *and* **0.645** held-out (May), with a sane
+>    waist axis. If `Ia·q̈` fails too → next suspects are a richer friction
+>    model and excitation conditioning (paper Eq. 11); the May model stays the
+>    deliverable and the **control phase starts on it**.
 >
-> **Home-PC prerequisites:** identification needs only numpy/scipy/cvxpy
-> (+CLARABEL); **validation needs real pinocchio 3.9 via ROS 2 Humble**
-> (`source /opt/ros/humble/setup.bash` — see Env gotchas below). Data CSVs are
-> tracked in git (the 76 MB replicate is under GitHub's 100 MB limit), so a
-> plain `git pull` brings everything; CHANGELOG entries for today's evening
-> results are **not yet written** — write them once the matrix completes.
+> **Prerequisites:** identification needs only numpy/scipy/cvxpy (+CLARABEL);
+> **validation needs real pinocchio 3.9 via ROS 2 Humble**
+> (`source /opt/ros/humble/setup.bash` — see Env gotchas below). The
+> `[warn] --fs=50.0 but CSV is 200.0 Hz` is benign — `load_and_filter`
+> overrides with the detected rate (`sysid_feasible.py:278`). The May run
+> (`traj_run_20260518_143818.csv`) remains the only independent held-out set;
+> both 200 Hz runs share the seed-42 trajectory.
 
 > **2026-06-12 — the delivered model is now CROSS-VALIDATED; control phase is
 > unblocked.** The 200 Hz dataset was collected

@@ -1,0 +1,5 @@
+γ=0.1  held-in=0.437  held-out=0.807  upper_arm: upper_arm_link 0.0042767922 0.0046613609 0.0046216693
+γ=0.2  held-in=0.433  held-out=0.761  upper_arm: upper_arm_link 0.0023945108 0.0025775922 0.0024248644
+γ=0.5  held-in=0.429  held-out=0.765  upper_arm: upper_arm_link 0.0020995175 0.0021707233 0.0021022652
+γ=1.0  held-in=0.424  held-out=0.786  upper_arm: upper_arm_link 0.0020422359 0.0020775192 0.0020430352
+γ=2.0  held-in=0.416  held-out=0.825  upper_arm: upper_arm_link 0.0020178622 0.0020356938 0.0020168241

@@ -352,3 +352,47 @@ inertia inflation is regularisable away.
 **Status.** Deliverable unchanged (May model, now cross-validated). The 200 Hz
 dataset stands as the better validation set and the substrate for the
 motor-inertia experiment.
+
+### Resolution of the γ question (2026-06-12 evening): the defect is structural
+
+The γ sweep (`sweep_gamma.sh`, γ ∈ {0.05…2.0} on the 200 Hz data; full table in
+the CHANGELOG) answered the "regularisable or structural?" question cleanly,
+and the answer is **structural** — but with a more interesting shape than
+expected:
+
+1. **The inertia inflation per se is regularisable.** By γ=0.5 the upper-arm
+   inertia is pinned to the blob scale (~0.002 kg·m²), and held-in RMSE keeps
+   *improving* monotonically with γ (0.460 → 0.416 at γ=2.0, beating the May
+   model's 0.438 on the same data).
+2. **Generalisation is not recovered.** Held-out RMSE on the May data is
+   U-shaped with a floor of ~0.76 at γ=0.2–0.5 — never near the May model's
+   0.645. So suppressing the inflated inertia does not remove whatever the fit
+   was using it for; the unexplained torque simply **migrates into other
+   parameters** (shoulder/elbow F0 offsets drift by ~0.1 Nm and 0.05 Nm across
+   the sweep) and held-out worsens again at large γ.
+3. **The waist defect reproduces on independent data.** Identifying on the
+   16:10 replicate run under the same recipe again yields the best-ever
+   held-in fit (0.375) *and* the same broken waist axis (R² −2.90 vs factory
+   +0.30).
+
+Reading: the 200 Hz data contains genuine acceleration-correlated torque that
+the feasible rigid-body link parameterisation cannot represent — it can only
+caricature it (inflated link inertia at low γ, distorted offsets at high γ),
+and each caricature fits the training run while damaging transfer. This is
+exactly the predicted signature of **reflected actuator inertia** (rotor +
+≈270:1 gearhead, local to each joint axis): a link-inertia stand-in wrongly
+couples into other axes through the RNEA, which is where the waist damage
+comes from. For the dissertation, the sweep is a nice negative result: it
+rules out "just tune the regulariser" and motivates the model-structure
+extension on physical grounds.
+
+A repeatability bonus from the replicate: the May model scores **0.438** mean
+RMSE on *both* independent 200 Hz collections (identical to 3 decimals), and
+factory drifts only 0.719→0.707 — so the validation methodology resolves
+model differences down to ~0.01 Nm.
+
+**Next experiment (decided):** add the per-joint motor-inertia term
+`τᵢ ← … + Ia_i·q̈ᵢ` to the regressor — 6 extra columns, parameters linear and
+constrained `Ia_i ≥ 0`, so the SDP structure is unchanged — then re-run the
+identification + cross-validation matrix on the 200 Hz data. Success criterion
+unchanged: beat 0.438 held-in *and* 0.645 held-out, with a sane waist axis.
