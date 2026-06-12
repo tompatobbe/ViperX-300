@@ -1,0 +1,39 @@
+{
+  "input_file": "data/traj_run_200hz_20260612_161025.csv",
+  "output_file": "outputs/npy/traj_run_200hz_20260612_161025__sysid_feasible-v1-4__cfg-a92e984c.npy",
+  "pipeline_name": "sysid_feasible",
+  "pipeline_version": "1.4",
+  "config": {
+    "fs": 50.0,
+    "fc_lpf": 10.0,
+    "stride": 4,
+    "method": "cvxpy",
+    "w1": 1.0,
+    "w2": 100.0,
+    "entropic": 0.05,
+    "solver": "CLARABEL",
+    "ref_mass": 0.5,
+    "ref_inertia": 0.001,
+    "torque_constant": 2.409,
+    "motors_per_joint": [
+      1,
+      2,
+      2,
+      1,
+      1,
+      1
+    ],
+    "drop_glitches": true
+  },
+  "config_hash": "a92e984c",
+  "created_at": "2026-06-12T14:48:54.937491+00:00",
+  "git_commit": "12fcb9f",
+  "source_checksum": "sha256:e6a22dd5066c2e482a8de3e08914a60a9d8c2480220b5239de722c012723b4aa",
+  "output_shape": [
+    78
+  ],
+  "output_dtype": "float64",
+  "hostname": "LAPTOP-T5MG86SM",
+  "python_version": "3.10.12",
+  "numpy_version": "2.2.6"
+}

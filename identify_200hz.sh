@@ -7,7 +7,7 @@
 set -eo pipefail
 cd "$(dirname "$0")"
 
-CSV=data/traj_run_200hz_20260612_131613.csv
+CSV=${1:-data/traj_run_200hz_20260612_131613.csv}   # optional arg: which run to identify on
 MAY_CSV=data/traj_run_20260518_143818.csv
 
 echo "════ [1/4] Identification (SDP, entropic 0.05, w2 100, stride 4) ════"
@@ -24,9 +24,9 @@ URDF=$(grep -oP '(Saved|Wrote)\s+→?\s*\K\S+\.urdf' /tmp/phi_to_urdf.out | tail
 [ -n "$URDF" ] || URDF=$(ls -t outputs/urdf/*.urdf | head -1)
 echo; echo "════ [3/4] Validation HELD-IN (vs the 200 Hz run itself) ════"
 source /opt/ros/humble/setup.bash
-python3 compare_urdf_performance.py --friction --csv "$CSV" --urdf-b "$URDF"
+python3 compare_urdf_performance.py --friction --drop-glitches --csv "$CSV" --urdf-b "$URDF"
 
 echo; echo "════ [4/4] Validation HELD-OUT (vs the independent May run) ════"
-python3 compare_urdf_performance.py --friction --csv "$MAY_CSV" --urdf-b "$URDF"
+python3 compare_urdf_performance.py --friction --drop-glitches --csv "$MAY_CSV" --urdf-b "$URDF"
 
 echo; echo "Done. Model: $URDF"
