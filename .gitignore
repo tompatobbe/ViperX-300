@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+__pycache__/
+*.pyc
+external/paper_model/__pycache__/
+external/
