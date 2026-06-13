@@ -9,6 +9,140 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-13 — Gravity deficit CLOSED on v1.5: re-identified models recover gravity; 200 Hz model (`cfg-a92e984c`) reproduces the paper's published gravity → new champion
+
+**Area:** identification results (v1.5 re-run) · model selection · the ≈0.63
+scale anomaly · `data/static_gravity_20260613_183554.csv` benchmark
+
+### Problem / Motivation
+The 2026-06-13 cross-check reopened identification: every pre-fix model carried
+almost no gravity. After the modified-DH root-cause fix (sysid 1.4→1.5) the
+models had to be re-identified and re-judged on the gravity-only static
+benchmark (`compare_gravity.py`, entry below).
+
+### Change
+Re-identified the May and 200 Hz models on the corrected v1.5 kinematics (same
+recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL
+--drop-glitches`; 200 Hz adds `--stride 4`) and scored pure gravity G(q) against
+the 15-pose static dataset, in raw master-motor mA.
+- May v1.5: `outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-5__cfg-9ef2c992.npy`
+- **200 Hz v1.5 (new champion): `outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy`**
+
+### Evidence (gravity swing [mA] / corr vs the measured static sweep)
+| model | shoulder swing | corr | elbow swing | mean corr* | mean RMSE_off* |
+|---|---|---|---|---|---|
+| measured | 1005 | — | 558 | — | — |
+| May v1-4 (pre-fix, invalid) | 204 | 0.86 | 141 | 0.60 | 145 |
+| May v1.5 | 1319 | 0.98 | 74.6 | 0.72 | 125 |
+| **200 Hz v1.5 `a92e984c`** | **1604** | **1.00** | **441** | **0.76** | **121** |
+| paper | 1683 | 0.99 | 489 | 0.71 | 132 |
+| factory `vx300s.urdf` | 1883 | 0.88 | 741 | −0.00 | 298 |
+
+*mean over gravity joints shoulder/elbow/wrist_angle.
+
+1. **Shoulder gravity recovered, best-in-class:** May swing 204→1319 (corr
+   0.86→0.98); 200 Hz reaches 1604 at corr 1.00, lowest shoulder RMSE_off of all
+   models. First model in the project carrying real shoulder gravity magnitude.
+2. **Excitation, not structure, explained the missing elbow/wrist:** May elbow
+   swing 74.6 → 200 Hz 441 (≈ paper 489, measured 558); wrist_angle 4.2 → 41.8
+   (paper 113, still mildly under-excited). The richer paper-rate trajectory
+   filled in the elbow.
+3. **Independent reproduction of the paper's gravity** (no CAD prior): 200 Hz
+   model within 5–10 % of the paper at the dominant joints (shoulder 95 %,
+   elbow 90 %) — the affirmative answer the original cross-check lacked.
+4. **Factory URDF is the broken reference at elbow/wrist:** our model and the
+   paper both correlate positively with measured there; the factory
+   anti-correlates (elbow −0.27, wrist −0.62, mean corr ≈ 0). The paper model,
+   not the manufacturer CAD URDF, is the proper benchmark.
+
+### Impact
+- **Champion changes to the 200 Hz v1.5 model `cfg-a92e984c`** (gravity-valid:
+  carries shoulder+elbow gravity, reproduces the paper, beats factory on every
+  gravity joint). HANDOVER updated.
+- The gravity-deficit reopening is **closed for the 200 Hz model**. The
+  identification → validated-URDF gate for the control phase is effectively met
+  on gravity, modulo the open items below.
+
+### Open questions / assumptions
+- **≈0.63 scale anomaly reinterpreted (see THESIS_NOTES "Resolution").** Both
+  the 200 Hz model (from motion) and the paper predict ~1.6× the static holding
+  current (1604/1005 ≈ 0.63). Most plausible cause: **gear stiction supports
+  part of gravity at standstill**, so the holding current under-reads gravity
+  and the model recovers the true value. Treat static amplitude as a lower bound
+  and shape/correlation as ground truth. Does not yet fully clear the ×2/k_t
+  question (the factor also appears on moving data); falsifiable via
+  holding-current hysteresis between approach directions.
+- **wrist_angle** still mildly under-excited (swing 41.8 vs paper 113).
+- **forearm_roll** measured swing 1641 mA is physically implausible as gravity
+  on a roll axis and predicted by no model — stiction/cogging/current artifact;
+  excluded from the gravity-joint means.
+- May v1.5 elbow stayed flat (74.6) — confirms the May trajectory's poor
+  elbow-gravity excitation; the 200 Hz collection is the lever.
+
+
+
+**Area:** new tool `compare_gravity.py` · validation methodology · benchmarks
+our models, the factory URDF and the paper authors' published model against the
+`static_gravity_20260613_183554` dataset
+
+### Problem / Motivation
+The reopened defect is that our identified models carry almost no gravity (G(q)
+nearly constant over configuration) while the measured holding currents are
+strongly pose-dependent — and the friction-fitted torque validation hid it
+(a per-joint offset basis fitted on the test data absorbs a flat model's error).
+We needed a comparison that isolates **gravity alone**, the broken term, and
+that can also score the paper authors' published model — which is not a URDF but
+closed-form symbolic G/M/C in master-motor **mA**.
+
+### Change
+New `compare_gravity.py`. In a held pose q̇=q̈=0, so M q̈ and C q̇ vanish and the
+measured current collapses to `G(q) + offset + stiction`. The script:
+- detects static dwells straight from the velocity signal (all joints
+  |q̇|<thresh for ≥min-dur, discarding a settle window), averages q and effort
+  over each dwell, and matches each to the nearest commanded pose for validation
+  (no CSV/JSON time-base alignment needed — match residual ≤ 0.05 rad here);
+- compares **pure gravity G(q)** from: measured holding current, the paper model
+  (`external/paper_model`, already mA), any URDF (Pinocchio RNEA(q,0,0)), and any
+  of our `phi` .npy (regressor `inverse_dynamics_phi` with friction columns
+  zeroed). Nm predictions → mA via `1/EFFORT_SCALE`;
+- reports everything in **raw master-motor mA** (assumption-free: no k_t, no ×2
+  dual-motor factor — sidesteps the ≈0.63 scale anomaly), per joint: gravity
+  **swing** (peak-to-peak over poses; the headline — a gravity-free model ≈ 0),
+  RMSE/MAE raw and after removing the best per-joint constant offset (= the
+  stiction/bias, isolating gravity *shape*), and correlation. Means are taken
+  over the gravity-bearing joints (shoulder/elbow/wrist_angle), since
+  waist/wrist_rotate carry ~no gravity in this sweep.
+- The paper model (`external/`, .gitignored) is cloned from
+  <https://github.com/MomaniMutaz/ViperX-300-6DoF-Robotic-Arm-Dynamical-Model>.
+
+### Evidence (smoke run: paper + May model `cfg-640cb8ef`, no ROS)
+15 dwells detected, pose-match residual ≤ 0.048 rad. Measured swing [mA]:
+shoulder 1005, elbow 558, **forearm_roll 1641**, wrist_angle 190. The May model
+reproduces only shoulder 204 / elbow 141 / forearm_roll 0.6 — i.e. **~5× too
+flat at the shoulder and essentially zero elsewhere**, quantifying the
+gravity-free defect. The paper model tracks the shoulder shape well (corr 0.99)
+but its swing (1683) overshoots measured (1005) by ~1.6× — ratio 0.60,
+**the ≈0.63 scale anomaly reappearing in raw mA**, assumption-free.
+
+### Impact
+Gives the identification phase a direct, friction-independent gravity metric and
+a physically-correct external reference (the paper G). No results invalidated;
+this is a new diagnostic. Recommended primary check for any re-identified model.
+
+### Open questions / assumptions
+- **forearm_roll** shows a huge measured swing (1641 mA) that neither the paper
+  (194) nor our model (≈0) predicts and that anti-correlates with paper-G
+  (−0.32) — likely stiction/cogging or a frame issue on the roll axis, not
+  gravity; worth isolating before trusting that joint.
+- The 0.60 measured/paper ratio on the shoulder is the cleanest statement yet of
+  the effort-scale anomaly (k_t / dual-motor / current semantics) — now on
+  static data with no inertia/Coriolis confound.
+- The q→paper-G angle convention is assumed identity (paper applies its own
+  q2/q3 offsets internally); the script's paper-vs-factory correlation check
+  (needs a URDF run with ROS) is the validation of that assumption.
+
+---
+
 ## 2026-06-13 — ROOT CAUSE FOUND & FIXED: modified-DH parameters were run through a standard-DH kinematic chain
 
 **Area:** `sysid_feasible.py` `_dh_transform` + `_ne_forward_pass` (FIXED,

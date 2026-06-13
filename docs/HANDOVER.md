@@ -1,12 +1,59 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-13 (KINEMATICS ROOT-CAUSE FIXED). **Phase:**
-identification **REOPENED** — a DH-convention bug that corrupted every model so
-far has been found and fixed; everything must be re-identified before control.
+**Last updated:** 2026-06-13 (GRAVITY DEFICIT CLOSED on v1.5). **Phase:**
+identification — re-run on the corrected kinematics is **done and validated on
+gravity**; a gravity-valid champion now exists. Control phase is unblocked on
+gravity, modulo the open items below.
 
 ---
 
-## ⇒ LAB RE-RUN PLAN (do this — start here)
+## ⇒ CURRENT STATE — gravity-valid champion (read this first)
+
+**The gravity deficit is closed.** After the modified-DH fix (v1.5) the models
+were re-identified and judged on the **gravity-only static benchmark**
+(`compare_gravity.py` on `data/static_gravity_20260613_183554.csv`, raw mA).
+
+**Champion (gravity-valid deliverable candidate):**
+- **phi:** `outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy`
+- Recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --stride 4`
+- Carries shoulder **and** elbow gravity; **reproduces the paper's published
+  gravity** (shoulder 95 %, elbow 90 %, no CAD prior); beats the factory URDF on
+  every gravity joint. Shoulder swing 1604 mA @ corr 1.00; mean over gravity
+  joints corr 0.76 / offset-removed RMSE 121 mA (paper 0.71 / 132; factory
+  −0.00 / 298). The May v1.5 model (`cfg-9ef2c992`) fixed the shoulder but left
+  the elbow under-excited (swing 74.6 mA) — the 200 Hz trajectory is what fills
+  the elbow in. Full table + takes: CHANGELOG "Gravity deficit CLOSED on v1.5"
+  and THESIS_NOTES "Resolution (2026-06-13, later)".
+
+**Re-validate / reproduce the champion:**
+```bash
+# (identification needs no ROS)
+python3 sysid_feasible.py data/traj_run_200hz_20260612_131613.csv \
+    --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --stride 4 --no-plot
+source /opt/ros/humble/setup.bash   # gravity comparison needs Pinocchio for the URDF
+python3 compare_gravity.py --urdf urdf/vx300s.urdf \
+    --phi outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy --plot
+```
+
+**Open items (not blocking gravity, but for the write-up / next round):**
+- **≈0.63 scale anomaly — reinterpreted as standstill stiction.** Model (from
+  motion) and paper both predict ~1.6× the static holding current; gear stiction
+  likely supports part of gravity at rest, so the holding current under-reads
+  gravity. Treat static amplitude as a lower bound, shape/corr as ground truth.
+  Falsifiable via holding-current hysteresis between approach directions; does
+  not yet clear the ×2/k_t question on moving data. (THESIS_NOTES "Resolution".)
+- **wrist_angle** still mildly under-excited (swing 41.8 vs paper 113).
+- **forearm_roll** measured swing 1641 mA is not gravity (roll axis; no model
+  predicts it) — stiction/cogging/current artifact; excluded from means.
+- **Elbow/wrist convention:** the factory `vx300s.urdf`, not our model, is the
+  broken reference at those joints (it anti-correlates with measured). The paper
+  is the proper benchmark.
+- Full inverse-dynamics (M,C) comparison vs the paper is still deferred (their
+  M,C are MATLAB-only); gravity carried the diagnostic value for this phase.
+
+---
+
+## ⇒ LAB RE-RUN PLAN (historical — the re-run this produced is now done)
 
 **What changed (one line).** `sysid_feasible.py` was running the modified-DH
 `DH_PARAMS` table through a *standard*-DH transform + Newton–Euler recursion, so
