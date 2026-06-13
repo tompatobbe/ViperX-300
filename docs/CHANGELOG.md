@@ -9,6 +9,241 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-13 — ROOT CAUSE FOUND & FIXED: modified-DH parameters were run through a standard-DH kinematic chain
+
+**Area:** `sysid_feasible.py` `_dh_transform` + `_ne_forward_pass` (FIXED,
+PIPELINE_VERSION 1.4→1.5) · `phi_to_urdf.py` `_dh_transform` (FIXED, 1.0→1.1) ·
+`tools/test_fk_equivalence.py` + `tools/test_phi_urdf_consistency.py` (gates) ·
+**invalidates all prior identification**
+
+### Root cause (one sentence)
+The `DH_PARAMS` table is written in the **modified (Craig) DH** convention
+(α, a are the *previous* link's — identical numbers to `sim/sim.py`'s
+`DH_TABLE`, which is validated against the real robot), but `_dh_transform`
+composed them as **standard (distal) DH** (`Rot_z·Trans_z·Trans_x·Rot_x`), and
+`_ne_forward_pass` used the matching standard-DH Newton–Euler recursion. Feeding
+modified-DH parameters through a standard-DH chain shifts every link twist to the
+wrong side of its joint rotation — which left the **shoulder as a vertical/yaw
+axis** (it should be a pitch axis), so it could not carry gravity. (Credit: the
+user spotted that `sim/sim.py` uses a different `dh_matrix` than
+`sysid_feasible.py` for the same parameters.)
+
+### The decisive evidence (vs the genuine Interbotix `urdf/vx300s.urdf`)
+- **Before:** consecutive joint-axis angle signature (convention-free) was
+  ∥,⊥,∥,⊥,⊥ — the real robot is ⊥,∥,⊥,⊥,⊥ (waist⊥shoulder, shoulder∥elbow —
+  the parallel pitch pair). The DH structure was shifted one joint down the arm.
+  A shoulder sweep held the pipeline EE at constant z (yaw) while the real arm's
+  EE swept z=+0.62→−0.11 m (pitch, ~4 Nm gravity).
+- **After the fix:** axis signature = ⊥,∥,⊥,⊥,⊥, matching the real robot exactly
+  (`tools/test_fk_equivalence.py` CHECK 1 PASS).
+
+### The fix (modified/Craig DH throughout — verified, not guessed)
+1. `_dh_transform` → `Rot_x(α)·Trans_x(a)·Rot_z(θ)·Trans_z(d)` (both
+   `sysid_feasible.py` and `phi_to_urdf.py`; matches `sim/sim.py`).
+2. `_ne_forward_pass` → Craig recursion: joint i rotates about z_i=[0,0,1] of
+   frame i; the linear-acceleration step uses the PARENT frame's ω, dω and the
+   moment arm in the parent frame, then rotates into frame i. The backward pass
+   and torque projection (`n_mat[2]` = z_i) were already correct for modified DH
+   and are unchanged.
+3. `phi_to_urdf` standalone export needed NO frame rewrite: because `Trans_z(d)`
+   commutes with the joint rotation, the URDF link frame coincides with the DH
+   frame, so joint origin = transform at q=0, axis z, inertia transfers directly.
+   (The earlier v1.1 "frame fix" was reverted; only the `_dh_transform` change
+   remains.)
+
+### Verification (independent reference = Pinocchio RNEA on the exported URDF)
+- `tools/test_fk_equivalence.py` → **PASS** (axis structure matches real URDF).
+- `tools/test_phi_urdf_consistency.py`: regressor torque == Pinocchio RNEA on the
+  generated URDF over 75 random (q,q̇,q̈) → max diff **3.0e-7 Nm** (float
+  round-off; PASS at 1e-6 tol). Gravity also matches an independent
+  energy-gradient computation to ~5e-9 Nm.
+
+### Impact
+- **All previously identified `phi`/URDFs are invalid** (fit through the wrong
+  kinematics) — May `cfg-640cb8ef`, Ia `cfg-ce8e7059`, every γ-sweep model. All
+  identification must be re-run with v1.5. The model-selection history is moot.
+- This is the single root cause of the documented "gravity-deficit", the
+  "structural 200 Hz defect", and the "broken waist axis."
+- KEEP also: `compare_urdf_performance.py` no-model-baseline reporting (separate
+  entry below).
+
+### Next steps
+Re-run identification (v1.5) on existing data; expect gravity to land on the
+shoulder/elbow. Then the static-gravity hardware experiment as the physical
+check, and add a pose-level FK calibration check (base+tool+joint-zero offsets)
+to also validate link lengths a,d (the axis structure is now confirmed; absolute
+reach is not yet asserted by a test).
+
+### How this surfaced
+Chasing the phi→URDF gravity mismatch (entry below: same phi, different gravity
+through the DH regressor vs the exported URDF). Added a consistency unit test
+(`tools/test_phi_urdf_consistency.py`): random phi → torque via the regressor
+must equal Pinocchio RNEA on the exported standalone URDF. It failed at ~18 Nm.
+
+### Two distinct problems found
+1. **Standalone URDF export (FIXED).** `generate_standalone` placed each joint
+   origin at the *full* DH transform `T_rel[i]` (q=0) with axis z. Classic DH
+   applies the joint rotation `Rot_z(θ_off+q)` **before** the constant tail
+   `K_i = Tz(d)·Tx(a)·Rx(α)`, whereas URDF rotates **after** the origin — so
+   for any twisted joint (α≠0) the URDF rotated about the wrong axis. Fix: the
+   URDF link frame is the *pre-K* frame `H_i = T[i-1]·Rot_z(θ_off+q)`; joint
+   origin `= K_{i-1}·Rot_z(θ_off_i)`, axis z (= true motion axis z of frame
+   i-1); each link's inertial is mapped from DH frame i into `H_i` by `K_i`
+   (`c'=K_i·c`, `J'=R_{K_i}·J·R_{K_i}ᵀ`). PIPELINE_VERSION 1.0 → 1.1.
+2. **The regressor itself disagrees with physics (NOT fixed).** Built an
+   independent ground truth — gravity torque as the gradient of potential
+   energy `U=−Σ mₖ g·p_com,k` (COMs placed via the regressor's own forward
+   kinematics, frame T[k+1]). The **fixed URDF reproduces this to 1.4e-7**
+   (so the URDF is correct physics), but **`regressor_fast`/`inverse_dynamics_phi`
+   differ from it by up to ~13 Nm.** Per-joint mean gravity error
+   (regressor vs truth): waist 0.000, shoulder **7.93**, elbow **7.09**,
+   forearm_roll 0.92, wrist_angle 0.81, wrist_rotate 0.09. The regressor reads
+   joint torque as `n_mat[2]` — the z-component of the link moment in DH
+   frame i — but the joint physically moves about z of frame i-1 (verified by
+   FK finite-difference); projecting onto the true motion axis fixes 5/6 joints
+   in a quick test, but the shoulder+elbow magnitudes show at least one further
+   effect (not a clean single-axis swap), so the exact anatomy is still open.
+
+### Impact (significant)
+- **The export fix is correct and verified** — but the identified `phi` were
+  fit by the *buggy* regressor, so every delivered parameter set (May
+  `cfg-640cb8ef`, Ia `cfg-ce8e7059`, all γ-sweep models) is contaminated:
+  identification drove parameters to match measured torque through wrong joint
+  axes. This is the leading candidate root cause for the documented
+  "gravity-deficit", the "structural 200 Hz defect", and the "broken waist
+  axis" — they may all be downstream of this.
+- **All identification must be re-run after the regressor is fixed.** Until
+  then, no identified URDF can be trusted, and the model-selection history is
+  moot.
+- Net: tasks reordered — fixing the regressor (`sysid_feasible`) now precedes
+  the SDP/γ "first-moment collapse" work (that diagnosis was performed with the
+  buggy regressor and must be revisited).
+
+### Next diagnostic step
+Isolate the regressor discrepancy precisely: compare `inverse_dynamics_phi`
+term-by-term against Pinocchio RNEA on the (now-correct) URDF for a single
+non-trivial link at a time; determine whether it is purely the torque-axis
+projection, a COM/first-moment frame placement, or both. Then fix
+`regressor_fast` to match and re-assert `test_phi_urdf_consistency.py` plus a
+new regressor-vs-energy-gradient gravity test.
+
+---
+
+## 2026-06-13 — Validation protocol fix: no-model baseline + rigid-body-primary in `compare_urdf_performance.py`
+
+**Area:** `compare_urdf_performance.py` (reporting only; no numbers change)
+
+### Problem / Motivation
+The cross-check entry below showed the friction-fitted mean RMSE has almost no
+power against a missing gravity model (nuisance basis alone: 0.381 vs 0.374
+with the best model). The protocol needed a built-in control.
+
+### Change
+Every report now includes a **no-model baseline** — τ_pred = 0 pushed through
+the *identical* protocol (including the friction/Ia nuisance fit) — plus a
+`baseline_margin` line showing how much A and B beat it (flagged when <10 %).
+The rigid-body-only section is labelled **primary criterion**; the
+friction-fitted section is labelled a secondary diagnostic. Docstring updated.
+
+### Evidence / first run
+200 Hz run, `--friction --fit-ia --drop-glitches --stride 20`: baseline mean
+RMSE 0.344; champion B margin **+2.0 %** (not meaningful); factory A margin
+**−80 %** (worse than no model — its full-scale gravity over-predicts the
+≈0.63-scaled measured torque, consistent with the scale anomaly below).
+
+### Impact
+No recomputation needed (pure reporting). All future model selection must
+quote the rigid-body-only per-joint table and the baseline margin.
+
+---
+
+## 2026-06-13 — Cross-check against the paper authors' published model: our identified URDFs carry almost no gravity; the `--friction`/`--fit-ia` validation masked it
+
+**Area:** validation methodology · identification results (both champions) ·
+external benchmark (paper authors' repo)
+
+### Problem / Motivation
+The paper authors publish their identified model at
+<https://github.com/MomaniMutaz/ViperX-300-6DoF-Robotic-Arm-Dynamical-Model>
+(no URDF — generated MATLAB/Python functions for M, C, G and friction with the
+identified base parameters baked in, **in master-motor current units, mA**).
+Question: does our pipeline, run on our data, reproduce a comparable model?
+
+### Evidence (read-only analysis, 2026-06-13; mA→Nm via `(I/1000)·k_t·n_motors`, k_t=2.409, n=2 shoulder/elbow)
+- **The paper's gravity model is physically sane.** Over the configurations of
+  our 200 Hz run, paper-G vs factory-CAD-G at the shoulder: r ≈ 0.95, similar
+  magnitude (RMS 2.60 vs 2.81 Nm).
+- **Our measured efforts contain that gravity signal.** Measured shoulder
+  torque vs paper-G: r = 0.92 (200 Hz run) / 0.95 (May run); vs factory-G:
+  0.87 / 0.91. Gravity is in the data, on both datasets.
+- **Our identified URDFs do not contain it.** Gravity RMS over the same
+  configurations, shoulder/elbow: Ia-γ0.5 `cfg-ce8e7059` **0.24 / 0.01 Nm**,
+  May `cfg-640cb8ef` **0.46 / 0.37 Nm** — vs ≈1.9 Nm of gravity-correlated
+  signal in the measurements. Masses sit at the γ-prior values (0.5, 0.5,
+  0.26/0.03, 0.03 kg…) with CoMs ≈ 0: the entropic prior, not the data, set
+  them. Bare-RNEA residual ≈ measured RMS (shoulder 1.75 of 1.92 Nm) —
+  the rigid-body part of the model explains almost nothing.
+- **Why validation didn't catch it:** with `--friction --fit-ia`, the
+  per-joint nuisance basis `b·q̇ + c·sign(q̇) + d (+ Ia·q̈)` fitted on the
+  *test* data scores mean RMSE **0.381 with no rigid-body model at all**
+  (τ_pred = 0); the Ia model improves that to only **0.374**. The
+  friction-fitted mean RMSE used for all recent model selection (γ sweeps,
+  May-vs-Ia matrix) therefore measured the nuisance fit, not the model.
+  The joint-mean also hides the shoulder (post-fit shoulder RMSE ≈ 1.2 Nm).
+- **Scale anomaly (open):** LS scale of measured torque on factory/paper
+  gravity is consistently ≈ **0.63** on both datasets — with our ×2 dual-motor
+  scaling, measured gravity-correlated torque is ~35 % smaller than CAD/paper
+  gravity. EFFORT_SCALE (n_motors=2, k_t) deserves a dedicated check.
+
+### Impact
+- **Answer to the reproduction question: no.** The paper's identification
+  recovered gravity; ours collapsed the gravity-bearing parameters (masses,
+  first moments) onto the regulariser prior. Root cause not yet isolated —
+  candidates: w1/w2/γ balance letting the prior dominate identifiable
+  directions (w2=100, γ=0.5), a defect in the gravity columns of the
+  regressor, or the effort-scaling anomaly above.
+- **All friction-fitted model-selection conclusions are suspect**, including
+  the May-vs-Ia "statistical tie" (entry below): both candidates are within
+  0.01 Nm of the *no-model baseline*. Rigid-body-only (no `--friction`)
+  per-joint metrics must become the primary criterion.
+- The identification phase is **not** complete; the validated-URDF gate for
+  the control phase is reopened (a gravity-free model cannot do gravity
+  compensation).
+
+### Root-cause triage (same day, read-only)
+1. **Regressor is OK.** Unconstrained LS on the same stacked regressor
+   (200 Hz run, stride 20) recovers configuration-dependent gravity:
+   shoulder/elbow gravity RMS 1.35/1.80 Nm, corr 0.61/0.42 with measured.
+2. **The identified phi's "gravity" is a constant, not gravity.** May-model
+   phi evaluated through the pipeline's own regressor at zero velocity:
+   mean −1.43/−2.42 Nm but std only **0.087/0.053 Nm** over the recorded
+   poses (LS: std 0.50/0.41). The SDP+γ solution zeroed the first moments
+   (CoMs≈0), so all pose dependence is gone; the constant comes from the
+   prior masses sitting at the DH frame origins. A constant is exactly what
+   the validation's offset nuisance term absorbs — hence invisible.
+3. **Separate export-frame inconsistency.** The *same* phi gives different
+   gravity through the DH regressor vs. through Pinocchio on the exported
+   standalone URDF (zero pose: shoulder −1.49 vs −0.62, elbow −2.39 vs
+   +0.39), although masses/CoMs transfer verbatim — the DH model and the
+   generated URDF disagree kinematically (suspect: DH θ-offsets / frame
+   conventions in `phi_to_urdf.py` standalone mode). Needs a unit test:
+   random phi → regressor-G vs URDF-G must match.
+4. Even LS recovers only ~⅓ of the expected gravity variation (std 0.50 vs
+   ~1.5+ Nm implied by paper/factory G) — consistent with the ≈0.63 scale
+   anomaly and/or gravity-direction collinearity in the excitation.
+
+### Open questions / assumptions
+- Why does the SDP/γ solution zero the identifiable first moments when the
+  data term should resist? (Check the SDP's φ_b against the LS solution in
+  the gravity-bearing base directions; check w1·data-term scaling.)
+- The ≈0.63 amplitude factor: load sharing between dual motors, effective
+  k_t, or current-reading semantics?
+- Factory-URDF *elbow* gravity anti-correlates with measured (r ≈ −0.2…−0.3)
+  while the paper's correlates (+0.44) — frame/sign convention at the elbow
+  worth checking before using factory as baseline A there.
+
+---
+
 ## 2026-06-13 — γ retune of the Ia recipe: statistical tie with the May model; Ia is γ-invariant
 
 **Area:** identification results (`sweep_gamma_ia.sh`) · model-selection status

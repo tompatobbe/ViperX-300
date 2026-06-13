@@ -51,7 +51,7 @@ import sys
 import pipeline_artifacts
 
 PIPELINE_NAME    = "phi_to_urdf"
-PIPELINE_VERSION = "1.0"   # bump when URDF generation logic changes
+PIPELINE_VERSION = "1.1"   # 1.1: _dh_transform corrected to modified (Craig) DH to match sysid_feasible (2026-06-13); standalone frames unchanged
 
 # =============================================================================
 # DH parameters (must match sysid_fast.py / sysid_subsample.py)
@@ -96,13 +96,20 @@ JOINT_LIMITS = [
 # =============================================================================
 
 def _dh_transform(alpha, a, d, theta):
+    # Modified (Craig) DH:  T = Rot_x(alpha) · Trans_x(a) · Rot_z(theta) · Trans_z(d)
+    # MUST match sysid_feasible._dh_transform — the DH_PARAMS table is in this
+    # convention (alpha,a are the previous link's). Standalone export stays simple:
+    # because Trans_z(d) commutes with the joint rotation Rot_z(q), the joint
+    # rotation can move to the end, so the URDF link frame coincides with the DH
+    # frame, the joint origin is this transform at q=0, axis=z, and the inertia
+    # (already in the DH frame) transfers directly. See CHANGELOG 2026-06-13.
     ct, st = np.cos(theta), np.sin(theta)
     ca, sa = np.cos(alpha), np.sin(alpha)
     return np.array([
-        [ct, -st*ca,  st*sa, a*ct],
-        [st,  ct*ca, -ct*sa, a*st],
-        [ 0,     sa,     ca,    d],
-        [ 0,      0,      0,    1],
+        [   ct,    -st,   0,    a   ],
+        [st*ca,  ct*ca, -sa, -sa*d  ],
+        [st*sa,  ct*sa,  ca,  ca*d  ],
+        [    0,      0,   0,    1    ],
     ])
 
 

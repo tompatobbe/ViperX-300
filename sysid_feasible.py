@@ -31,7 +31,7 @@ import os
 import pipeline_artifacts
 
 PIPELINE_NAME    = "sysid_feasible"
-PIPELINE_VERSION = "1.4"   # 1.4: effort columns are mA; τ = (mA/1000)·2.409·motors (was wrongly %-of-stall)
+PIPELINE_VERSION = "1.5"   # 1.5: kinematics corrected to modified (Craig) DH (_dh_transform + _ne_forward_pass) — the table was modified-DH but ran through a standard-DH chain, making the shoulder a yaw axis and losing gravity (2026-06-13). 1.4: effort columns are mA; τ = (mA/1000)·2.409·motors
 
 # =============================================================================
 # 1. DH kinematics  (unchanged from sysid_fast.py)
@@ -59,13 +59,24 @@ N_PARAMS_T = N_JOINTS * N_PARAMS   # 78
 
 
 def _dh_transform(alpha, a, d, theta):
+    # Modified (Craig) DH:  T = Rot_x(alpha) · Trans_x(a) · Rot_z(theta) · Trans_z(d)
+    # `alpha`, `a` are the PREVIOUS link's twist/length — the DH_PARAMS table was
+    # built for this convention (identical numbers to sim/sim.py's DH_TABLE, which
+    # matches the real robot). The previous standard-DH order
+    # (Rot_z·Trans_z·Trans_x·Rot_x) put every twist on the wrong side of its joint
+    # rotation, shifting the joint-axis structure by one joint and making the
+    # shoulder a vertical/yaw axis — so identification could never place gravity on
+    # it (the gravity-deficit bug). The Newton–Euler recursion already assumes this
+    # modified-DH convention (joint i rotates about z_i; torque read as n·z_i), so
+    # correcting only this function makes the regressor match physical ground truth.
+    # See CHANGELOG 2026-06-13 and tools/test_fk_equivalence.py.
     ct, st = np.cos(theta), np.sin(theta)
     ca, sa = np.cos(alpha), np.sin(alpha)
     return np.array([
-        [ct, -st*ca,  st*sa, a*ct],
-        [st,  ct*ca, -ct*sa, a*st],
-        [ 0,     sa,     ca,    d],
-        [ 0,      0,      0,    1],
+        [   ct,    -st,   0,    a   ],
+        [st*ca,  ct*ca, -sa, -sa*d  ],
+        [st*sa,  ct*sa,  ca,  ca*d  ],
+        [    0,      0,   0,    1    ],
     ])
 
 
@@ -78,10 +89,20 @@ def forward_kinematics(q):
 
 
 # =============================================================================
-# 2a. NE forward pass  (unchanged)
+# 2a. NE forward pass  (modified/Craig DH)
 # =============================================================================
 
 def _ne_forward_pass(q, dq, ddq, T, R):
+    # Modified (Craig) DH Newton–Euler forward recursion, matching _dh_transform
+    # and the modified-DH DH_PARAMS table (and sim/sim.py, which matches the real
+    # robot). Joint i rotates about z_i = [0,0,1] of frame i. Link i-1 spans joint
+    # i-1 → joint i, so the linear-acceleration recursion uses the PARENT frame's
+    # ω, dω and the moment arm P expressed in the PARENT frame, then rotates the
+    # result into frame i. (The earlier standard-DH form used the joint axis
+    # z_{i-1} and a frame-i moment arm — inconsistent with the modified-DH
+    # parameters, which made the shoulder a yaw axis and lost gravity; see
+    # CHANGELOG 2026-06-13. Verified: regressor == Pinocchio RNEA to ~1e-7 Nm.)
+    EZ = np.array([0.0, 0.0, 1.0])
     g0 = np.array([0.0, 0.0, 9.81])
     omega  = [np.zeros(3) for _ in range(N_JOINTS + 1)]
     domega = [np.zeros(3) for _ in range(N_JOINTS + 1)]
@@ -89,17 +110,17 @@ def _ne_forward_pass(q, dq, ddq, T, R):
     ddp[0] = g0
 
     for i in range(1, N_JOINTS + 1):
-        Rp   = R[i-1]; Ri = R[i]
-        Rrel = Rp.T @ Ri
-        zi_1_loc   = Rrel.T @ np.array([0.0, 0.0, 1.0])
-        omega_loc  = Rrel.T @ omega[i-1]
-        domega_loc = Rrel.T @ domega[i-1]
-        omega[i]   = omega_loc + dq[i-1] * zi_1_loc
-        domega[i]  = domega_loc + ddq[i-1] * zi_1_loc + np.cross(omega_loc, dq[i-1] * zi_1_loc)
-        r_loc = Ri.T @ (T[i][:3, 3] - T[i-1][:3, 3])
-        ddp[i] = (Ri.T @ (Rp @ ddp[i-1])
-                  + np.cross(domega[i], r_loc)
-                  + np.cross(omega[i], np.cross(omega[i], r_loc)))
+        R_to_i = (R[i-1].T @ R[i]).T                 # maps frame i-1 → frame i
+        w_im1, dw_im1, a_im1 = omega[i-1], domega[i-1], ddp[i-1]
+        P = R[i-1].T @ (T[i][:3, 3] - T[i-1][:3, 3]) # frame-i origin, in frame i-1
+        omega[i]  = R_to_i @ w_im1 + dq[i-1] * EZ
+        domega[i] = (R_to_i @ dw_im1
+                     + np.cross(R_to_i @ w_im1, dq[i-1] * EZ)
+                     + ddq[i-1] * EZ)
+        lin = (np.cross(dw_im1, P)
+               + np.cross(w_im1, np.cross(w_im1, P))
+               + a_im1)
+        ddp[i] = R_to_i @ lin
 
     return omega, domega, ddp
 

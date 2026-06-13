@@ -513,3 +513,47 @@ tiebreaker must be **new data**: a different-seed 200 Hz collection, with the
 decision rule **pre-registered** before any model touches it — lower mean
 friction+Ia-fitted RMSE on the neutral set, May `cfg-640cb8ef` vs Ia-γ0.5
 `cfg-ce8e7059`, one shot, no retuning afterwards.
+
+## External benchmark vs the paper's published model; gravity-deficit finding (2026-06-13)
+
+**Context.** The source-paper authors publish their identified model at
+<https://github.com/MomaniMutaz/ViperX-300-6DoF-Robotic-Arm-Dynamical-Model>.
+There is **no URDF** in that repo: the model ships as symbolically generated
+MATLAB/Python functions (mass matrix, Coriolis vector, gravity vector,
+friction vector) with the identified *base* parameters baked into the
+expressions. Two consequences for us: (a) a URDF-to-URDF diff is impossible —
+comparison has to happen at the level of predicted physics; (b) their
+parameters are in **master-motor current units (mA)** (their controller
+commands current directly, comments in `Gravity_Compensation_Function.py`),
+so any SI comparison inherits our mA→Nm conversion assumptions
+(k_t = 2.409 Nm/A, ×2 for shoulder/elbow).
+
+**What the comparison showed (full numbers in the 2026-06-13 CHANGELOG
+entry).** Three-way gravity-vector comparison over our recorded
+configurations: paper-G ≈ factory-CAD-G (shoulder r≈0.95, similar magnitude),
+and *measured* shoulder torque correlates 0.87–0.95 with both — but **our
+identified URDFs (May and Ia champions alike) contain almost no gravity**
+(shoulder gravity RMS 0.24–0.46 Nm vs ≈1.9 Nm of gravity-correlated signal in
+the data). Link masses sit at the entropic-prior values with CoMs ≈ 0.
+
+**Methodological lesson (dissertation-grade).** The `--friction`/`--fit-ia`
+validation protocol fits a per-joint nuisance basis (viscous + Coulomb +
+offset + Ia·q̈) **on the evaluation data**. That basis alone — with *no*
+rigid-body model — achieves mean RMSE 0.381 on the 200 Hz run; our best model
+only improves this to 0.374. So the friction-fitted joint-mean RMSE that
+drove recent model selection had almost no statistical power to detect a
+missing gravity model: the nuisance fit dominated the score, and averaging
+over six joints buried the shoulder failure (post-fit shoulder RMSE ≈1.2 Nm).
+**Rule going forward: rigid-body-only, per-joint metrics are the primary
+validation criterion; friction-fitted numbers are secondary diagnostics.**
+A useful permanent control: always report the *no-model baseline* (τ_pred=0
+through the same nuisance fit) alongside — a model must beat it decisively
+before any model-vs-model comparison is meaningful.
+
+**Open: the ≈0.63 scale factor.** Regressing measured torque on factory/paper
+gravity gives a consistent slope ≈0.63 on *both* datasets. With our
+EFFORT_SCALE the measured gravity-correlated torque is ~35 % below CAD/paper
+gravity — pointing at the dual-motor ×2 assumption, the effective torque
+constant, or current-reading semantics. Needs a dedicated static experiment
+(hold known poses, read currents, compare to CAD gravity) before the next
+identification round.

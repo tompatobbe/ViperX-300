@@ -26,6 +26,15 @@ URDF can explain, which inflates both errors equally. Pass --friction to also
 report errors after a per-joint least-squares fit of viscous + Coulomb + offset
 friction (fit independently for each model), isolating the rigid-body quality.
 
+**The rigid-body-only, per-joint numbers are the PRIMARY criterion.** The
+friction-fitted numbers are a secondary diagnostic: the nuisance basis is
+fitted on the evaluation data itself and can absorb most of the measured
+torque on its own (found 2026-06-13: the basis with *no* rigid-body model
+scored within 0.01 Nm of the then-best model — see CHANGELOG). Every report
+therefore includes a **no-model baseline** (τ_pred = 0 pushed through the
+identical protocol); a model that does not beat the baseline decisively has
+explained nothing, regardless of how it ranks against another model.
+
 Usage
 -----
     python3 compare_urdf_performance.py                 # defaults below
@@ -166,6 +175,19 @@ def print_report(label, tau_meas, tau_pred):
     return rmse, rel
 
 
+def baseline_margin(rmse_0, rmse_a, rmse_b):
+    """How much each model beats the no-model baseline (τ_pred = 0 through the
+    identical protocol). A model that is not clearly below the baseline has
+    explained nothing — any A-vs-B ranking below is then meaningless."""
+    print(f"\n  Margin over no-model baseline (mean RMSE {rmse_0.mean():.3f} Nm; "
+          f"positive = model explains signal):")
+    for label, rmse in (("A", rmse_a), ("B", rmse_b)):
+        margin = rmse_0.mean() - rmse.mean()
+        pct = 100.0 * margin / rmse_0.mean()
+        flag = "" if pct > 10.0 else "   ← NOT meaningfully better than no model"
+        print(f"    {label}: {margin:+.3f} Nm ({pct:+.1f}%){flag}")
+
+
 def winner_summary(name_a, rmse_a, name_b, rmse_b):
     print("\n" + "=" * 64)
     print("VERDICT (lower total RMSE = better dynamic model)")
@@ -249,11 +271,16 @@ def main():
     tau_a, name_a = predict_torques(args.urdf_a, q, dq, ddq)
     tau_b, name_b = predict_torques(args.urdf_b, q, dq, ddq)
 
+    tau_zero = np.zeros_like(tau_meas)
+
     print("\n" + "-" * 64)
     print("RIGID-BODY ONLY (gravity + inertia + Coriolis, no friction)")
+    print("— PRIMARY CRITERION —")
     print("-" * 64)
+    rmse_0, _ = print_report("0: no-model baseline (τ_pred = 0)", tau_meas, tau_zero)
     rmse_a, _ = print_report(f"A: {os.path.basename(args.urdf_a)}", tau_meas, tau_a)
     rmse_b, _ = print_report(f"B: {os.path.basename(args.urdf_b)}", tau_meas, tau_b)
+    baseline_margin(rmse_0, rmse_a, rmse_b)
     winner_summary(os.path.basename(args.urdf_a), rmse_a,
                    os.path.basename(args.urdf_b), rmse_b)
 
@@ -265,11 +292,15 @@ def main():
         print("\n" + "-" * 64)
         print("WITH PER-JOINT FRICTION FITTED (viscous + Coulomb + offset"
               + (" + motor inertia Ia·q̈" if args.fit_ia else "") + ")")
+        print("— secondary diagnostic; nuisance basis is fitted on this data —")
         print("-" * 64)
+        tau_0_f, _    = fit_friction(tau_meas, tau_zero, dq, ddq_fit)
         tau_a_f, ia_a = fit_friction(tau_meas, tau_a, dq, ddq_fit)
         tau_b_f, ia_b = fit_friction(tau_meas, tau_b, dq, ddq_fit)
+        rmse_0_f, _ = print_report("0: no-model baseline (τ_pred = 0)", tau_meas, tau_0_f)
         rmse_a_f, _ = print_report(f"A: {os.path.basename(args.urdf_a)}", tau_meas, tau_a_f)
         rmse_b_f, _ = print_report(f"B: {os.path.basename(args.urdf_b)}", tau_meas, tau_b_f)
+        baseline_margin(rmse_0_f, rmse_a_f, rmse_b_f)
         if args.fit_ia:
             print(f"\n  Fitted reflected motor inertia Ia [kg·m²] "
                   f"(plausible scale: ~N²·J_rotor):")
