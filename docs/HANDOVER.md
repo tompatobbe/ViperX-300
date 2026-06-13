@@ -1,5 +1,112 @@
 # HANDOVER — start here
 
+**Last updated:** 2026-06-13 (KINEMATICS ROOT-CAUSE FIXED). **Phase:**
+identification **REOPENED** — a DH-convention bug that corrupted every model so
+far has been found and fixed; everything must be re-identified before control.
+
+---
+
+## ⇒ LAB RE-RUN PLAN (do this — start here)
+
+**What changed (one line).** `sysid_feasible.py` was running the modified-DH
+`DH_PARAMS` table through a *standard*-DH transform + Newton–Euler recursion, so
+the shoulder was modelled as a yaw axis instead of a pitch axis and gravity
+could never be identified. Fixed to modified (Craig) DH — matches `sim/sim.py`
+and the real `urdf/vx300s.urdf`. **Verified** (regressor == Pinocchio RNEA to
+3e-7 Nm; FK axis structure matches the real robot). Details: CHANGELOG
+2026-06-13 "ROOT CAUSE FOUND & FIXED".
+
+**Consequence.** Every identified `phi`/URDF to date is invalid (May
+`cfg-640cb8ef`, Ia `cfg-ce8e7059`, all γ-sweep models). `PIPELINE_VERSION` was
+bumped (sysid 1.4→1.5, phi_to_urdf 1.0→1.1) so all artifacts recompute. The
+whole model-selection history is moot. **Re-identify from scratch.**
+
+**Datasets (unchanged, still valid — only the recordings, not the models):**
+- 200 Hz primary: `data/traj_run_200hz_20260612_131613.csv`
+- 200 Hz replicate (same seed-42 traj): `data/traj_run_200hz_20260612_161025.csv`
+- May 47 Hz (independent held-out): `data/traj_run_20260518_143818.csv`
+
+**Step 0 — sanity-check the fix is in place (fast, do once):**
+```bash
+source /opt/ros/humble/setup.bash
+python3 tools/test_fk_equivalence.py          # expect: PASS (axis structure matches real URDF)
+python3 tools/test_phi_urdf_consistency.py    # expect: PASS (regressor == URDF RNEA, ~3e-7 Nm)
+```
+
+**Step 1 — re-identify (plain model, the old "May recipe", now on corrected
+kinematics). Identification does NOT need ROS:**
+```bash
+# May data
+python3 sysid_feasible.py data/traj_run_20260518_143818.csv \
+    --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --no-plot
+# 200 Hz data
+python3 sysid_feasible.py data/traj_run_200hz_20260612_131613.csv \
+    --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --stride 4 --no-plot
+```
+Each prints `Saved → outputs/npy/…__sysid_feasible-v1-5__cfg-XXXXXXXX.npy`. Note
+the two new paths (call them `$PHI_MAY`, `$PHI_200`).
+
+**Step 2 — export URDFs:**
+```bash
+python3 phi_to_urdf.py $PHI_MAY      # → outputs/urdf/…phi_to_urdf-v1-1….urdf  (call it $URDF_MAY)
+python3 phi_to_urdf.py $PHI_200      # → $URDF_200
+```
+
+**Step 3 — THE KEY CHECK: does gravity now land on the shoulder/elbow?**
+In the `phi_to_urdf` summary the shoulder/elbow CoM and mass should now be
+non-trivial (not pinned at the 0.5 kg blob with CoM≈0). Then validate:
+```bash
+source /opt/ros/humble/setup.bash
+python3 compare_urdf_performance.py --csv data/traj_run_200hz_20260612_131613.csv \
+    --urdf-b $URDF_200 --friction --drop-glitches
+```
+**Read the new RIGID-BODY-ONLY (PRIMARY) table and the "Margin over no-model
+baseline" line** (added 2026-06-13). Success = model B beats the no-model
+baseline by a clear margin on the shoulder/elbow rigid-body torque — that is the
+first time we will have a model that actually contains gravity. (Friction-fitted
+numbers are now a secondary diagnostic only.)
+
+**Step 4 — held-out cross-check:** validate the 200 Hz model on the May data and
+vice-versa (swap `--csv`/`--urdf-b`). Compare per-joint rigid-body RMSE, not the
+friction-fitted mean.
+
+**Optional — Ia (reflected motor inertia) variant**, once the plain model is
+confirmed sane. Re-run with `--motor-inertia` and validate with `--fit-ia`:
+```bash
+python3 sysid_feasible.py data/traj_run_200hz_20260612_131613.csv \
+    --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches \
+    --stride 4 --motor-inertia --no-plot
+# validate: add --fit-ia to compare_urdf_performance.py (NOT comparable to friction-only numbers)
+```
+Note: the Ia values from before the fix are also invalid — the shoulder ≈0.8
+result must be re-confirmed on corrected kinematics.
+
+**Hardware (optional but high-value) — static gravity experiment.** Hold ~10
+spread static poses, record holding currents at standstill. This is the physical
+ground-truth check that gravity now sits on the shoulder/elbow, and it settles
+the open ≈0.63 measured-vs-CAD gravity scale anomaly (the ×2 dual-motor
+`EFFORT_SCALE` / `k_t` assumption — see CHANGELOG "Cross-check against the paper
+authors' published model"). Ask Claude to generate the pose list + analysis.
+
+**Still open (not blocking the re-run):**
+- `tools/test_fk_equivalence.py` validates the joint-AXIS structure only; link
+  lengths `a,d` / absolute reach are not yet asserted by a test (add a
+  pose-level calibration check — base+tool+joint-zero offsets).
+- The ≈0.63 effort-scale anomaly (resolve with the static experiment above).
+
+**Env reminder:** identification needs only numpy/scipy/cvxpy(+CLARABEL);
+validation/sim need real Pinocchio 3.9 via `source /opt/ros/humble/setup.bash`.
+The `[warn] --fs=50.0 but CSV is 200.0 Hz` is benign (auto-detected).
+
+---
+
+## Historical record (PRE-kinematics-fix — context only; all models below are now INVALID)
+
+> ⚠️ Everything from here down predates the 2026-06-13 kinematics fix. The
+> conclusions (May model is the deliverable, the Ia tie, the γ sweeps, the
+> "structural 200 Hz defect") were all produced through the buggy standard-DH
+> chain and are superseded. Kept for provenance / thesis narrative only.
+
 **Last updated:** 2026-06-13 (Ia experiment COMPLETE — hypothesis confirmed,
 incumbent not dethroned). **Phase:** identification **COMPLETE** → **control**;
 optional follow-ups on the Ia track are open but the May model stands.
