@@ -104,20 +104,35 @@ def predict_torques(urdf_path, q_arm, dq_arm, ddq_arm):
 # --------------------------------------------------------------------------- #
 # Optional per-joint friction fit (viscous + Coulomb + constant offset)
 # --------------------------------------------------------------------------- #
-def fit_friction(tau_meas, tau_pred, dq):
+def fit_friction(tau_meas, tau_pred, dq, ddq=None):
     """Least-squares fit residual = tau_meas - tau_pred to f(dq) per joint.
 
-        f = b*dq + c*sign(dq) + d
+        f = b*dq + c*sign(dq) + d            (+ Ia*ddq  if ddq is given)
 
-    Returns the friction-compensated prediction tau_pred + f.
+    Passing ddq adds a per-joint reflected motor-inertia column Ia·q̈ to the
+    nuisance basis (--fit-ia). Like friction, it is fitted per model per
+    dataset — symmetric across A and B — so the comparison still isolates the
+    rigid-body (link-parameter) quality; URDFs identified with
+    sysid_feasible --motor-inertia carry no Ia in their <inertial> blocks, so
+    this supplies the q̈-proportional torque their rigid-body part deliberately
+    excludes. The fitted Ia [kg·m²] are returned for plausibility checks
+    (expect ~N²·J_rotor at ≈270:1 gearing).
+
+    Returns (friction-compensated prediction tau_pred + f, Ia or None).
     """
     tau_comp = tau_pred.copy()
+    ia_fit = np.zeros(N_JOINTS) if ddq is not None else None
     for j in range(N_JOINTS):
         residual = tau_meas[:, j] - tau_pred[:, j]
-        A = np.column_stack([dq[:, j], np.sign(dq[:, j]), np.ones_like(dq[:, j])])
+        cols = [dq[:, j], np.sign(dq[:, j]), np.ones_like(dq[:, j])]
+        if ddq is not None:
+            cols.append(ddq[:, j])
+        A = np.column_stack(cols)
         coef, *_ = np.linalg.lstsq(A, residual, rcond=None)
         tau_comp[:, j] = tau_pred[:, j] + A @ coef
-    return tau_comp
+        if ddq is not None:
+            ia_fit[j] = coef[3]
+    return tau_comp, ia_fit
 
 
 # --------------------------------------------------------------------------- #
@@ -207,6 +222,12 @@ def main():
     p.add_argument("--stride", type=int, default=1, help="subsample stride")
     p.add_argument("--friction", action="store_true",
                    help="also report errors with per-joint friction fitted")
+    p.add_argument("--fit-ia", action="store_true",
+                   help="add a per-joint reflected motor-inertia column Ia·q̈ "
+                        "to the friction fit (both models; implies a different "
+                        "protocol — numbers are NOT comparable to --friction-"
+                        "only runs). Needed to validate URDFs identified with "
+                        "sysid_feasible --motor-inertia. Requires --friction.")
     p.add_argument("--plot", action="store_true", help="save a torque comparison plot")
     p.add_argument("--drop-glitches", action="store_true",
                    help="remove all-joints=−π sync-read dropout rows before "
@@ -236,14 +257,25 @@ def main():
     winner_summary(os.path.basename(args.urdf_a), rmse_a,
                    os.path.basename(args.urdf_b), rmse_b)
 
+    if args.fit_ia and not args.friction:
+        p.error("--fit-ia requires --friction")
+
     if args.friction:
+        ddq_fit = ddq if args.fit_ia else None
         print("\n" + "-" * 64)
-        print("WITH PER-JOINT FRICTION FITTED (viscous + Coulomb + offset)")
+        print("WITH PER-JOINT FRICTION FITTED (viscous + Coulomb + offset"
+              + (" + motor inertia Ia·q̈" if args.fit_ia else "") + ")")
         print("-" * 64)
-        tau_a_f = fit_friction(tau_meas, tau_a, dq)
-        tau_b_f = fit_friction(tau_meas, tau_b, dq)
+        tau_a_f, ia_a = fit_friction(tau_meas, tau_a, dq, ddq_fit)
+        tau_b_f, ia_b = fit_friction(tau_meas, tau_b, dq, ddq_fit)
         rmse_a_f, _ = print_report(f"A: {os.path.basename(args.urdf_a)}", tau_meas, tau_a_f)
         rmse_b_f, _ = print_report(f"B: {os.path.basename(args.urdf_b)}", tau_meas, tau_b_f)
+        if args.fit_ia:
+            print(f"\n  Fitted reflected motor inertia Ia [kg·m²] "
+                  f"(plausible scale: ~N²·J_rotor):")
+            print(f"    {'joint':<14}{'A':>12}{'B':>12}")
+            for j, name in enumerate(ARM_JOINTS):
+                print(f"    {name:<14}{ia_a[j]:>12.5f}{ia_b[j]:>12.5f}")
         winner_summary(os.path.basename(args.urdf_a), rmse_a_f,
                        os.path.basename(args.urdf_b), rmse_b_f)
 

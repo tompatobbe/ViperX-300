@@ -108,7 +108,14 @@ def _ne_forward_pass(q, dq, ddq, T, R):
 # 2b. Vectorised NE backward pass  (unchanged)
 # =============================================================================
 
-def regressor_fast(q, dq, ddq):
+def regressor_fast(q, dq, ddq, motor_inertia=False):
+    """
+    One-sample regressor. With motor_inertia=True, 6 extra columns are appended
+    after the 78 link parameters: column 78+i is q̈_i on joint i's row and zero
+    elsewhere — the reflected actuator inertia term τ_i += Ia_i·q̈_i
+    (rotor+gearhead inertia seen through the ≈270:1 gearbox; local to each
+    joint axis, no cross-axis coupling, unlike link inertia).
+    """
     T = forward_kinematics(q)
     R = [T[i][:3, :3] for i in range(N_JOINTS + 1)]
     omega, domega, ddp = _ne_forward_pass(q, dq, ddq, T, R)
@@ -170,6 +177,8 @@ def regressor_fast(q, dq, ddq):
         W[li, base+11] += np.sign(dq[li])
         W[li, base+12] += 1.0
 
+    if motor_inertia:
+        W = np.hstack([W, np.diag(ddq)])   # columns 78..83: Ia_i · q̈_i
     return W
 
 
@@ -211,6 +220,8 @@ def inverse_dynamics_phi(q, dq, ddq, phi):
         n_ext[i] = ni + n_next
         tau[idx]  = n_ext[i][2] + phi_i[10]*dq[idx] + phi_i[11]*np.sign(dq[idx]) + phi_i[12]
 
+    if len(phi) == N_PARAMS_T + N_JOINTS:      # trailing Ia block (motor inertia)
+        tau += phi[N_PARAMS_T:] * ddq
     return tau
 
 
@@ -593,8 +604,15 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True,
     b = W_base.T @ tau_stacked
     const = float(tau_stacked @ tau_stacked)
 
+    # Total standard-parameter count comes from L_mat: 78 link params, plus a
+    # trailing per-joint reflected motor-inertia block Ia (6) when the
+    # regressor was built with motor_inertia=True. Ia enters linearly with the
+    # single constraint Ia_i ≥ 0; the per-link LMIs are untouched.
+    n_std = L_mat.shape[0]
+    n_ia  = n_std - N_PARAMS_T
+
     phi_b = cp.Variable(rank)
-    phi   = cp.Variable(N_PARAMS_T)
+    phi   = cp.Variable(n_std)
 
     data_term = cp.quad_form(phi_b, cp.psd_wrap(G)) - 2.0 * (b @ phi_b) + const
     coupling  = cp.sum_squares(phi_b - L_mat.T @ phi)
@@ -623,6 +641,9 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True,
     for link_idx, sign in _MCY_SIGN_CONSTRAINTS:
         cons.append(sign * phi[link_idx * N_PARAMS + 2] >= 1e-5)
 
+    for j in range(N_PARAMS_T, n_std):
+        cons.append(phi[j] >= 0)              # reflected motor inertia Ia_i ≥ 0
+
     obj_expr = w1 * data_term + w2 * coupling
     if entropic_gamma > 0:
         # Bounded log-det (Bregman) divergence to a GENERIC isotropic reference
@@ -639,8 +660,9 @@ def identify_sdp(W_base, tau_stacked, L_mat, w1=1.0, w2=5e-3, verbose=True,
     if verbose:
         reg = (f", log-det div γ={entropic_gamma:g} → P0=diag({ref_inertia:g}·I₃,{ref_mass:g})"
                if entropic_gamma > 0 else "")
+        ia_note = f" + {n_ia} motor-inertia Ia" if n_ia else ""
         print(f"  Solving SDP ({N_JOINTS} 4×4 LMIs + {len(cons) - N_JOINTS} linear, "
-              f"{rank} base + {N_PARAMS_T} standard vars{reg})...")
+              f"{rank} base + {N_PARAMS_T} standard{ia_note} vars{reg})...")
     prob.solve(**({} if solver is None else {"solver": solver}))
     if phi.value is None:
         raise RuntimeError(f"SDP did not solve (status={prob.status}).")
@@ -658,9 +680,16 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
                        verbose=True, plot=True, method='trust-constr',
                        w1=1.0, w2=5e-3, entropic_gamma=0.0, solver=None,
                        ref_mass=0.5, ref_inertia=1e-3,
-                       drop_glitches=False, use_measured_vel=False):
+                       drop_glitches=False, use_measured_vel=False,
+                       motor_inertia=False):
+    if motor_inertia and method != 'cvxpy':
+        raise ValueError("--motor-inertia is only implemented for the SDP path "
+                         "(--method cvxpy); the NLP solvers are legacy.")
+    n_std = N_PARAMS_T + (N_JOINTS if motor_inertia else 0)
+
     print("=" * 60)
-    print(f"ViperX-300 SysID — Full feasibility (stride={stride})")
+    print(f"ViperX-300 SysID — Full feasibility (stride={stride}"
+          + (", +motor inertia Ia·q̈" if motor_inertia else "") + ")")
     print("=" * 60)
 
     print("\n[1] Loading and filtering data...")
@@ -671,11 +700,12 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
     print(f"    Samples: {N},  duration: {t[-1]-t[0]:.2f} s")
 
     print("\n[2] Building stacked regressor W (fast NE)...")
-    W_rows = np.empty((N * N_JOINTS, N_PARAMS_T))
+    W_rows = np.empty((N * N_JOINTS, n_std))
     for n in range(N):
         if verbose and n % max(1, N//10) == 0:
             print(f"    sample {n}/{N}", end="\r")
-        W_rows[n*N_JOINTS:(n+1)*N_JOINTS, :] = regressor_fast(q[n], dq[n], ddq[n])
+        W_rows[n*N_JOINTS:(n+1)*N_JOINTS, :] = regressor_fast(
+            q[n], dq[n], ddq[n], motor_inertia=motor_inertia)
     print()
     tau_full = tau_meas.reshape(N * N_JOINTS)
     print(f"    W shape: {W_rows.shape}")
@@ -689,7 +719,7 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
 
     print("\n[4] Finding base parameters via QR...")
     base_cols, L_mat = find_base_parameters(W_norm)
-    print(f"    Full: {N_PARAMS_T},  Base: {len(base_cols)}")
+    print(f"    Full: {n_std},  Base: {len(base_cols)}")
 
     phi_ls, *_ = np.linalg.lstsq(W_norm, tau_norm, rcond=None)
     rel_ls = rel_metric(tau_meas, (W_rows @ phi_ls).reshape(N, N_JOINTS))
@@ -726,10 +756,12 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
     print(f"\n[6] Final REL: {rel_id.round(4)}  mean={rel_id.mean():.4f}")
 
     print("\n[7] Identified friction parameters:")
-    print(f"{'Joint':<14} {'Fv':>10} {'Fc':>10} {'F0':>10}")
+    hdr_ia = f" {'Ia':>10}" if motor_inertia else ""
+    print(f"{'Joint':<14} {'Fv':>10} {'Fc':>10} {'F0':>10}{hdr_ia}")
     for i in range(N_JOINTS):
         idx = i * N_PARAMS
-        print(f"  {ARM_JOINTS[i]:<12} {phi_id[idx+10]:>10.4f} {phi_id[idx+11]:>10.4f} {phi_id[idx+12]:>10.4f}")
+        col_ia = f" {phi_id[N_PARAMS_T+i]:>10.4f}" if motor_inertia else ""
+        print(f"  {ARM_JOINTS[i]:<12} {phi_id[idx+10]:>10.4f} {phi_id[idx+11]:>10.4f} {phi_id[idx+12]:>10.4f}{col_ia}")
 
     print("\n[8] Feasibility check:")
     all_ok = True
@@ -757,6 +789,14 @@ def run_identification(csv_path, fs=50.0, fc_lpf=10.0, stride=1,
         print(f"    I^c eigenvalues: {eigs_ic.round(5)}  min={eigs_ic.min():.5f}  "
               f"[{'OK' if ic_pd_ok else 'FAIL (16c)'}]")
         print(f"    triangle slack: {tri.round(5)}  [{'OK' if tri_ok else 'FAIL (16d-f)'}]")
+
+    if motor_inertia:
+        print("\n  reflected motor inertia (Ia ≥ 0):")
+        for i in range(N_JOINTS):
+            ia = phi_id[N_PARAMS_T + i]
+            ok = ia >= -1e-6
+            all_ok &= ok
+            print(f"    {ARM_JOINTS[i]:<14} Ia={ia:.5f} kg·m²  [{'OK' if ok else 'FAIL'}]")
 
     print("\n  mcy sign constraints (eq. 16i):")
     for link_idx, sign in _MCY_SIGN_CONSTRAINTS:
@@ -825,6 +865,14 @@ if __name__ == "__main__":
                         help="Remove communication-dropout rows where all joints "
                              "read the sentinel −π simultaneously (22 in the "
                              "20260518_143818 run) before filtering.")
+    parser.add_argument("--motor-inertia", action="store_true",
+                        help="Add a per-joint reflected actuator-inertia term "
+                             "Ia_i·q̈_i to the regressor (6 extra linear params, "
+                             "Ia ≥ 0; cvxpy method only). Motivated by the 200 Hz "
+                             "re-identification defect — see THESIS_NOTES "
+                             "'Resolution of the γ question' (2026-06-12). Ia is "
+                             "not representable in URDF; phi_to_urdf emits it as "
+                             "a comment / controller feed-forward.")
     parser.add_argument("--use-measured-vel", action="store_true",
                         help="Use the encoder's reported *_vel column for q̇ "
                              "(one fewer differentiation stage) instead of "
@@ -869,6 +917,8 @@ if __name__ == "__main__":
         config["drop_glitches"] = True
     if args.use_measured_vel:
         config["use_measured_vel"] = True
+    if args.motor_inertia:
+        config["motor_inertia"] = True   # phi gains a trailing Ia block (84,)
 
     # Cache-hit check: skip expensive computation if the artifact already exists.
     if not args.force:
@@ -892,6 +942,7 @@ if __name__ == "__main__":
         entropic_gamma=args.entropic, solver=args.solver,
         ref_mass=args.ref_mass, ref_inertia=args.ref_inertia,
         drop_glitches=args.drop_glitches, use_measured_vel=args.use_measured_vel,
+        motor_inertia=args.motor_inertia,
     )
 
     npy_path, json_path = pipeline_artifacts.save_artifact(
