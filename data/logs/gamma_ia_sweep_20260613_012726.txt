@@ -1,0 +1,4 @@
+γ=0.02  held-in=0.352  held-out=0.914  shoulder_Ia=0.798536
+γ=0.1  held-in=0.340  held-out=0.529  shoulder_Ia=0.798040
+γ=0.2  held-in=0.339  held-out=0.527  shoulder_Ia=0.797940
+γ=0.5  held-in=0.335  held-out=0.526  shoulder_Ia=0.797737

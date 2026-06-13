@@ -1,8 +1,8 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-12 (late evening; γ sweep + matrix complete). **Phase:**
-identification **COMPLETE** → **control**, with one decided identification
-experiment queued: the **`Ia·q̈` motor-inertia term**.
+**Last updated:** 2026-06-13 (Ia experiment COMPLETE — hypothesis confirmed,
+incumbent not dethroned). **Phase:** identification **COMPLETE** → **control**;
+optional follow-ups on the Ia track are open but the May model stands.
 
 > **2026-06-12 late evening — γ sweep finished, matrix complete: the 200 Hz
 > defect is STRUCTURAL. Next concrete task: implement `Ia·q̈`. Pick up here.**
@@ -25,19 +25,55 @@ experiment queued: the **`Ia·q̈` motor-inertia term**.
 >    independent 200 Hz collections. All evening docs are written (CHANGELOG,
 >    THESIS_NOTES); `sweep_gamma.sh` was fixed to survive artifact cache hits.
 >
-> **Next actions (in order):**
-> 1. **Implement the per-joint motor-inertia term** in the `sysid_feasible.py`
->    regressor: `τᵢ += Ia_i·q̈ᵢ` — 6 extra columns (one per joint, like the
->    friction terms), parameters linear, constraint `Ia_i ≥ 0`; SDP structure
->    unchanged. Bump `PIPELINE_VERSION`. Export note: `Ia` cannot live in a
->    URDF link inertial — keep it sidecar metadata (like F0) for the
->    controller.
-> 2. Re-run identification + the cross-validation matrix on the 200 Hz data
->    (reuse `sweep_gamma.sh` machinery). **Success bar unchanged:** beat
->    **0.438** held-in (200 Hz) *and* **0.645** held-out (May), with a sane
->    waist axis. If `Ia·q̈` fails too → next suspects are a richer friction
->    model and excitation conditioning (paper Eq. 11); the May model stays the
->    deliverable and the **control phase starts on it**.
+> **2026-06-13: the `Ia·q̈` experiment is COMPLETE** (implementation +
+> smoke tests + real run + full matrix; CHANGELOG 2026-06-13 "motor-inertia"
+> entry incl. Results; THESIS_NOTES "Reflected motor inertia" → Outcome).
+>
+> **Tooling now in the repo:** `sysid_feasible.py --motor-inertia` (phi →
+> (84,), SDP only), `phi_to_urdf.py` handles (84,) (Ia → URDF comment +
+> sidecar, never inertials), `compare_urdf_performance.py --fit-ia` (the
+> protocol for Ia models — NOT comparable to friction-only numbers),
+> `sweep_gamma_ia.sh`, `tests/test_motor_inertia.py` (suite 47/47).
+>
+> **Outcome.** Ia model `cfg-f512651d` (13:16 CSV, May recipe + Ia):
+> feasible, Ia = [0.084, **0.798**, 0.156, 0, 0.040, 0.009] kg·m² (plausible,
+> 3 estimators agree on shoulder ≈ 0.6–0.8), upper-arm inflation gone at
+> γ=0.05, **waist axis healed** (held-out waist 0.244 beats the May model's
+> held-in 0.275). But the matrix (friction+Ia-fitted RMSE/MAE,
+> `--drop-glitches`):
+>
+> | model \ data | 200 Hz 13:16 | May 47 Hz |
+> |---|---|---|
+> | factory | 0.618 / 0.452 | 1.488 / 0.520 |
+> | May `cfg-640cb8ef` | **0.332** / 0.231 held-out | **0.520** / 0.351 held-in |
+> | Ia `cfg-f512651d` | 0.343 / 0.239 held-in | 0.579 / 0.379 held-out |
+>
+> **Not dethroned** (−3 % / −11 %, gap concentrated in the shoulder) → the
+> **May model stays the deliverable**. Caveats (THESIS_NOTES self-audit): the
+> Ia model ran on May-tuned hyperparameters, and challengers are held-out on
+> the dirty May CSV while the incumbent is held-out on clean 200 Hz data.
+>
+> **γ retune DONE (same day, `sweep_gamma_ia.sh`): STATISTICAL TIE.**
+> γ=0.5 (`cfg-ce8e7059`): held-in 0.335 / held-out 0.526 vs May 0.332 / 0.520
+> — both gaps below the ~0.01 Nm repeatability resolution. Ia is γ-invariant
+> (shoulder 0.798 ± 0.1 % over 25× γ) → strongly identified by the data; the
+> γ=0.5 realisation is presentable (CoMs ≤ 2 cm). Strict decision rule: May
+> model keeps the crown; honest statement: indistinguishable. **Tuning is
+> exhausted — do NOT keep evaluating against the May CSV** (its held-out
+> independence is spent; multiple-comparisons). Details: CHANGELOG "γ retune"
+> entry; THESIS_NOTES "γ retune result" incl. the pre-registered tiebreak.
+>
+> **Open paths (pick one):**
+> 1. **Tiebreak with new data**: different-seed 200 Hz collection (change the
+>    seed in `run_trajectories.py`, run via `collect_200hz.sh`), then ONE
+>    pre-registered comparison — May `cfg-640cb8ef` vs Ia-γ0.5 `cfg-ce8e7059`,
+>    `--friction --fit-ia --drop-glitches`, lower mean RMSE wins, no retuning
+>    afterwards.
+> 2. **Start the control phase** — on the May model (strict reading), or
+>    argue the Ia-γ0.5 model on qualitative grounds (healed waist, explicit
+>    actuator model). Either way the controller should use the Ia
+>    feed-forward (sidecar JSON `motor_inertia_Ia`; values ≈ [0.083, 0.798,
+>    0.156, 0, 0.040, 0.009] kg·m², stable across all runs).
 >
 > **Prerequisites:** identification needs only numpy/scipy/cvxpy (+CLARABEL);
 > **validation needs real pinocchio 3.9 via ROS 2 Humble**

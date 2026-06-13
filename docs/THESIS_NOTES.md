@@ -396,3 +396,120 @@ model differences down to ~0.01 Nm.
 constrained `Ia_i ≥ 0`, so the SDP structure is unchanged — then re-run the
 identification + cross-validation matrix on the 200 Hz data. Success criterion
 unchanged: beat 0.438 held-in *and* 0.645 held-out, with a sane waist axis.
+
+## Reflected motor inertia: model extension and validation protocol (2026-06-13)
+
+**The model.** With high gear ratios (≈270:1 on the ViperX-300) the
+current-derived torque must also accelerate the motor's own rotor and gear
+train. Seen from the joint, this is `Ia_i·q̈ᵢ` with `Ia = N²·J_rotor` —
+plausibly 0.1–1 kg·m², i.e. potentially *larger* than the link inertias
+(0.002–0.05 here). Crucially it is **local and configuration-independent**:
+torque on its own axis only, proportional to its own q̈, identical in every
+posture — whereas link inertia is posture-dependent and couples across joints
+through the Newton–Euler recursion. A fit lacking the term can only mimic it
+by inflating link inertia, which drags in spurious cross-coupling — the
+mechanism behind the 200 Hz waist defect.
+
+**Implementation choice.** Appended as 6 trailing regressor columns
+(diag(q̈)), parameters linear with `Ia ≥ 0` — the pseudo-inertia LMIs and the
+entropic regulariser are untouched, so the identification stays a convex SDP
+with a unique global optimum. Opt-in (`--motor-inertia`), conditional config
+key so the delivered May artifacts keep their hashes. This is a *deviation
+from the source paper*, which does not model actuator inertia; the
+justification is the γ-sweep negative result (above) plus the standard
+treatment in the identification literature (motor/drive inertia as a diagonal
+addition to the mass matrix).
+
+**URDF export decision.** `Ia` is deliberately **kept out of the URDF
+inertials**: a URDF can only attach inertia to a *link*, and a link-inertia
+encoding of rotor inertia is exactly the falsehood the term exists to remove.
+It travels in the artifact sidecar + a URDF comment (like F0) and belongs in
+the controller as feed-forward `Ia·q̈` (pinocchio: `model.armature`).
+
+**Validation protocol decision.** `compare_urdf_performance.py --fit-ia` adds
+a per-joint q̈ column to the same least-squares nuisance basis as friction,
+fitted per model per dataset — **symmetric across both models**, so the
+comparison still isolates rigid-body (link-parameter) quality. The
+alternative — using each model's *identified* Ia as fixed feed-forward — is
+closer to deployment but asymmetric (the factory and May models have no
+identified Ia) and entangles the link-parameter comparison with Ia-estimation
+quality. Caveat to report: `--fit-ia` numbers are a *different protocol* and
+must never be mixed with friction-only numbers in one table.
+
+**First evidence (smoke runs, 2026-06-13; full runs pending).** A stride-40
+identification on the 200 Hz data with the term came out feasible with the
+upper-arm inertia at blob scale (no inflation) and shoulder Ia = 0.80 kg·m²
+(dual motor). Independently, *fitting* Ia on the May model's 200 Hz residuals
+gives shoulder Ia = 0.64 kg·m² — the same scale from a different estimator —
+while the factory model's fitted shoulder Ia is negative (−0.77), as expected
+if its CAD link inertias already overshoot. Two estimators agreeing on a
+physically plausible magnitude is good preliminary support for the
+hypothesis.
+
+### Outcome (2026-06-13): hypothesis confirmed, incumbent not dethroned
+
+The full experiment (CHANGELOG 2026-06-13 "Results") split the verdict in an
+instructive way:
+
+- **As physics, the term is vindicated.** The q̈ columns lower the
+  unconstrained REL (shoulder 0.57→0.44), the identified Ia magnitudes are
+  plausible and reproducible across three estimators, the upper-arm inertia
+  inflation disappears at the *original* γ=0.05, and — the acid test — the
+  **waist axis is healed**: the Ia model's waist beats even the May model's
+  held-in waist on May data. The chain γ-sweep-negative-result → structural
+  diagnosis → model extension → defect cured is a complete, defensible
+  methodology arc for the dissertation.
+- **As a model, it still loses the matrix narrowly** (0.343 vs 0.332 on
+  200 Hz; 0.579 vs 0.520 on May), with the gap concentrated in the shoulder.
+  Per the decision rule the May model remains the deliverable.
+
+**Evaluation-bias self-audit (examiner material).** The margin must be read
+with two asymmetries in mind, raised during the analysis: (1) every
+hyperparameter (γ, w2, ref-mass, stride) was tuned on/for the May data — the
+challengers run on borrowed settings, and the γ sweep proved the recipe is
+dataset-sensitive; (2) the held-out arenas are unequal — the incumbent is
+tested held-out on the clean 200 Hz data, the challengers on the May CSV with
+its known residual channel glitches (waist, wrist_rotate R² −48 for *all*
+models). Counterweights: tuning-overfit would predict the May model fails
+held-out, and it does the opposite; and the γ sweep was a genuine tuning
+campaign for the 200 Hz side that still produced no winner. Conclusion: the
+May model's generalisation is real, but its *margin* is partly an artefact of
+asymmetric tuning and asymmetric test sets.
+
+**Open paths (either is defensible):** (a) a γ retune of the Ia recipe
+(`sweep_gamma_ia.sh`) — the 3 % held-in deficit under borrowed
+hyperparameters is not a closed case; (b) a different-seed 200 Hz collection
+as a neutral held-out arena both models have never seen — the clean way to
+crown a final winner; (c) accept the May model (twice cross-validated) and
+start the control phase, reporting the Ia experiment as a confirmed
+structural finding whose identified Ia feed-forward the controller can use
+regardless.
+
+### γ retune result (2026-06-13, later): statistical tie; Ia is γ-invariant
+
+Path (a) was run (CHANGELOG "γ retune" entry). Two findings:
+
+1. **The gap closes to within measurement resolution.** At γ=0.5
+   (`cfg-ce8e7059`): 0.335 held-in / 0.526 held-out vs the May model's
+   0.332 / 0.520 — both gaps below the ~0.01 Nm replicate repeatability. The
+   borrowed-hyperparameter explanation of the earlier margin was therefore
+   largely correct. Strictly, the decision rule is still not met (no point
+   beats both numbers), so the May model remains the deliverable; the honest
+   dissertation statement is that the two models are **indistinguishable on
+   the available data**, with qualitative advantages on the Ia side (healed
+   waist axis, explicit actuator model, presentable γ=0.5 realisation).
+2. **Ia is invariant to the regulariser** — shoulder Ia drifts 0.1 % over a
+   25× γ range while the link realisation changes drastically (γ=0.02: 1.9 m
+   CoMs; γ=0.5: ≤ 2 cm). The data, not the prior, pins Ia. This cleanly
+   separates the well-identified subspace (base parameters + Ia) from the
+   realisation nuisance the regulariser resolves, and is the strongest
+   identifiability evidence in the project so far.
+
+**Methodological stop-rule.** Further tuning cannot break the tie: both
+curves flatten short of the targets, and every additional evaluation against
+the May CSV spends its held-out independence (this project has now queried it
+many times — a multiple-comparisons liability an examiner may probe). The
+tiebreaker must be **new data**: a different-seed 200 Hz collection, with the
+decision rule **pre-registered** before any model touches it — lower mean
+friction+Ia-fitted RMSE on the neutral set, May `cfg-640cb8ef` vs Ia-γ0.5
+`cfg-ce8e7059`, one shot, no retuning afterwards.

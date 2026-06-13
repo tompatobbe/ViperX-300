@@ -9,6 +9,164 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-13 — γ retune of the Ia recipe: statistical tie with the May model; Ia is γ-invariant
+
+**Area:** identification results (`sweep_gamma_ia.sh`) · model-selection status
+
+### Problem / Motivation
+The Ia model lost the matrix narrowly on May-tuned hyperparameters (entry
+below). Question: does its own γ close the gap (the 3 % held-in deficit on
+borrowed settings was not a closed case)?
+
+### Evidence (`--friction --fit-ia --drop-glitches` mean RMSE; targets: May model 0.332 / 0.520)
+| γ | held-in (200 Hz) | held-out (May) | shoulder Ia [kg·m²] |
+|---|---|---|---|
+| 0.02 | 0.352 | 0.914 | 0.7985 |
+| 0.05 | 0.343 | 0.579 | 0.7982 |
+| 0.1 | 0.340 | 0.529 | 0.7980 |
+| 0.2 | 0.339 | 0.527 | 0.7979 |
+| 0.5 | **0.335** | **0.526** | 0.7977 |
+
+### Impact
+- **Statistical tie.** γ=0.5 (`cfg-ce8e7059`) is within the ~0.01 Nm
+  run-to-run repeatability resolution of the May model on *both* arenas
+  (−0.003 / −0.006). Strictly by the decision rule the May model keeps the
+  crown; honestly stated, the models are indistinguishable on the available
+  data — and the Ia model carries the healed waist and an explicit actuator
+  model. Its γ=0.5 realisation is also presentable (CoMs ≤ 2 cm, no 1 m
+  outliers), unlike γ≤0.05.
+- **Ia is γ-invariant** (0.1 % drift over a 25× γ range, all joints) while
+  the link realisation changes drastically — strong identifiability evidence
+  that Ia is determined by the data, not the prior. Thesis-grade result.
+- **Tuning is exhausted as a tiebreaker**: both curves flatten (held-out
+  → ~0.525 > 0.520), and each further evaluation against the May CSV erodes
+  its held-out independence (multiple-comparisons). **The tie can only be
+  broken by a different-seed 200 Hz collection** — a neutral arena neither
+  model has seen — with the decision rule fixed *before* looking
+  (pre-registered: lower mean friction+Ia-fitted RMSE on the neutral set
+  wins; candidates: May `cfg-640cb8ef` vs Ia-γ0.5 `cfg-ce8e7059`).
+
+### Open questions / assumptions
+- Elbow Ia (0.156) vs shoulder Ia (0.798) asymmetry persists at every γ —
+  stable, but unexplained for identical drivetrains.
+- forearm_roll Ia pinned at 0 across the sweep (axis nearly aligned with its
+  own rotor at low load?) — note, not investigated.
+
+---
+
+## 2026-06-13 — Implemented the per-joint reflected motor-inertia term (`--motor-inertia`)
+
+**Area:** `sysid_feasible.py` (regressor + SDP) · `phi_to_urdf.py` ·
+`compare_urdf_performance.py` (new `--fit-ia` protocol) · model structure
+
+### Problem / Motivation
+The γ sweep (2026-06-12 evening entry) established that the 200 Hz
+re-identification defect is **structural**: the data contains real
+acceleration-correlated torque that the rigid-body link parameterisation can
+only caricature. The physical candidate is **reflected actuator inertia**
+(rotor + gearhead at ≈270:1; Ia = N²·J_rotor, plausibly 0.1–1 kg·m² seen from
+the joint), which is local to each joint axis — a link-inertia stand-in wrongly
+couples into other axes via RNEA (the reproducing waist defect).
+
+### Change
+- **`sysid_feasible.py --motor-inertia`** (SDP path only): 6 extra regressor
+  columns appended *after* the 78 link parameters — column 78+i is q̈ᵢ on joint
+  i's row (`np.hstack([W, np.diag(ddq)])`), structurally like the friction
+  columns. 6 new linear params `Ia_i` with the single constraint `Ia_i ≥ 0`;
+  the per-link pseudo-inertia LMIs, coupling term and entropic regulariser are
+  untouched, so the problem stays a convex SDP. phi becomes shape (84,).
+  Config key `motor_inertia` is **conditional** (same idiom as
+  `--drop-glitches`), so the delivered recipe's hash/artifacts reproduce
+  byte-for-byte; no version bump needed.
+- **`phi_to_urdf.py`** accepts (84,): URDF is built from phi[:78] unchanged
+  (Ia is *deliberately* not representable in `<inertial>` — putting it there
+  would re-introduce the false cross-axis coupling); Ia is reported in the
+  summary, an XML comment in the URDF, and the artifact sidecar JSON
+  (`config.motor_inertia_Ia`) for the controller feed-forward `Ia·q̈` /
+  pinocchio `model.armature`.
+- **`compare_urdf_performance.py --fit-ia`** (requires `--friction`): adds a
+  per-joint `q̈` column to the nuisance LS basis, fitted per model per dataset
+  — symmetric across A and B, exactly like friction — and prints the fitted Ia.
+  This is the protocol for validating Ia-identified URDFs (their rigid-body
+  part deliberately excludes the q̈-proportional torque). **Numbers under
+  `--fit-ia` are not comparable to friction-only numbers**; the cross-model
+  matrix must be redone under one protocol.
+- New unit tests `tests/test_motor_inertia.py`: regressor ↔ scalar
+  Newton–Euler agreement for (78,) and (84,) phi, Ia block = diag(q̈), link
+  columns unchanged by the flag. Suite: 47/47 pass.
+
+### Evidence (smoke tests; real runs pending)
+- Stride-40 in-process identification on the 13:16 200 Hz CSV (γ=0.05 recipe +
+  `--motor-inertia`): solver optimal, **[ALL OK]**, and — the headline — the
+  **upper-arm link inertia stays at blob scale (~0.002)** with Ia absorbing
+  the acceleration torque: shoulder Ia = 0.80 kg·m² (dual motor), waist 0.074,
+  elbow 0.098.
+- Independent cross-check via `--fit-ia` on the **May model's** 200 Hz
+  residuals: fitted shoulder Ia = 0.64 kg·m² — same scale from a completely
+  different estimator. (Factory model's fitted shoulder Ia is *negative*,
+  −0.77: its CAD link inertias are too large, consistent.)
+- Hash stability: re-running `phi_to_urdf` on the delivered npy cache-hits the
+  existing `cfg-3ef0a00c` artifact.
+
+### Impact
+- Ready for the real experiment: re-identify on the 200 Hz data with
+  `--motor-inertia` (stride 4) and run the cross-validation matrix under
+  `--friction --fit-ia --drop-glitches`. Success bar (from HANDOVER): beat the
+  May model on **both** datasets *under the same protocol*, with a sane waist
+  axis and link inertias at sane scale.
+- NLP solvers (`trust-constr`/`SLSQP`) intentionally do not support the flag
+  (legacy path); they raise with a clear message.
+
+### Results (same day) — Ia model loses the matrix narrowly; waist healed; May model stays the deliverable
+Real identification (13:16 CSV, May recipe + `--motor-inertia`, artifacts
+`cfg-f512651d`): optimal, **[ALL OK]**, unconstrained REL 0.510→0.476 (shoulder
+0.569→0.437 — the q̈ columns explain real signal), upper-arm inertia at blob
+scale (no inflation), Ia = [0.084, 0.798, 0.156, 0.000, 0.040, 0.009] kg·m².
+Full cross-validation matrix under the new `--friction --fit-ia
+--drop-glitches` protocol (mean RMSE / MAE [Nm]):
+
+| model \ data | 200 Hz 13:16 | May 47 Hz |
+|---|---|---|
+| factory vx300s.urdf | 0.618 / 0.452 | 1.488 / 0.520 |
+| May model `cfg-640cb8ef` | **0.332** / 0.231 (held-out) | **0.520** / 0.351 (held-in) |
+| Ia model `cfg-f512651d` | 0.343 / 0.239 (held-in) | 0.579 / 0.379 (held-out) |
+
+- **Decision rule: not dethroned** (−3 % and −11 %). The May model remains the
+  deliverable.
+- **The structural defect is nevertheless fixed**: Ia-model waist R² +0.733
+  held-in and RMSE 0.244 held-out on May data — *better than the May model's
+  own held-in waist* (0.275); all previous 200 Hz models were at R² −3…−12.
+  The residual gap is concentrated in the **shoulder** (1.754 vs 1.549 on May).
+- Validation-fitted Ia cross-checks: on 200 Hz data both non-factory models'
+  residuals want shoulder Ia ≈ 0.64–0.74 (factory: −0.77, its CAD inertias
+  overshoot); on the May CSV all fitted Ia ≈ 0 — the 47 Hz pipeline filtered
+  the q̈ signal away, which is *why* the May-era identification never saw the
+  term.
+- **Caveats on the margin** (THESIS_NOTES): the Ia model ran on May-tuned
+  hyperparameters (γ=0.05 etc.), and challengers are tested held-out on the
+  *dirty* May CSV while the incumbent is tested held-out on the *clean* 200 Hz
+  data. A γ retune for the Ia recipe (`sweep_gamma_ia.sh`) and/or a
+  different-seed 200 Hz collection (neutral held-out arena) are the follow-ups
+  before the thesis fixes a final winner.
+- Realisation cosmetics: the Ia model's distal masses collapsed (4–18 g,
+  forearm CoM 0.98 m) — torque-faithful (RNEA uses mc, J_O) but not
+  presentable; a ref-mass/γ retune item, only relevant if the Ia model wins.
+
+### Open questions / assumptions
+- Elbow Ia (0.156) ≪ shoulder Ia (0.798) despite the same dual-XM540
+  drivetrain — identifiability or real? The shoulder is also where the Ia
+  model still loses; possibly the Ia column absorbs shoulder torque that
+  belongs elsewhere.
+- Wrist joints are XM430 (not XM540) with different gearing — per-joint Ia
+  magnitudes should differ; treat large deviations from N²·J_rotor expectations
+  as an identifiability flag, not truth.
+- Whether validation should use the *identified* Ia as fixed feed-forward
+  instead of re-fitting it per dataset is a protocol choice (see THESIS_NOTES
+  "Reflected motor inertia"); fitting was chosen for symmetry with the
+  friction treatment.
+
+---
+
 ## 2026-06-13 — Workspace reorganisation: pipeline at root, everything else categorised
 
 **Area:** repository layout only — **no code, results, or methodology changed**
