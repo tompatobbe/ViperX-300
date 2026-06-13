@@ -1,0 +1,28 @@
+{
+  "input_file": "outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-5__cfg-9ef2c992.npy",
+  "output_file": "outputs/urdf/traj_run_20260518_143818__sysid_feasible-v1-5__cfg-9ef2c992__phi_to_urdf-v1-1__cfg-3ef0a00c.urdf",
+  "pipeline_name": "phi_to_urdf",
+  "pipeline_version": "1.1",
+  "config": {
+    "mode": "standalone",
+    "template": null,
+    "link_names": [
+      "waist_link",
+      "upper_arm_link",
+      "forearm_link",
+      "wrist_link",
+      "gripper_link",
+      "ee_arm"
+    ],
+    "robot_name": "viper300_sysid",
+    "mass_floor": 0.0
+  },
+  "config_hash": "3ef0a00c",
+  "created_at": "2026-06-13T14:25:30.772699+00:00",
+  "git_commit": "24a3ed5",
+  "source_checksum": "sha256:ef8d2b5b0732ce3869be6a47149a63c87f81ea9ebd999708676ce3a2bd754b0b",
+  "content_length": 5342,
+  "hostname": "LAPTOP-T5MG86SM",
+  "python_version": "3.10.12",
+  "numpy_version": "2.2.6"
+}

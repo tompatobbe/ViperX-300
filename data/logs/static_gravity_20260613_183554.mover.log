@@ -1,0 +1,37 @@
+[static] MOVER: 15 poses | move 4.0s | dwell 6.0s
+[static] (run record_joint_states_200hz.py in parallel — or use collect_static_gravity.sh)
+[static] Connecting to 'vx300s' …
+[INFO] [1781368556.470309965] [interbotix_robot_manipulation]: Initialized InterbotixRobotNode!
+[INFO] [1781368556.512333855] [interbotix_robot_manipulation]: 
+	Robot Name: vx300s
+	Robot Model: vx300s
+[INFO] [1781368556.512761172] [interbotix_robot_manipulation]: Initialized InterbotixRobotXSCore!
+[INFO] [1781368556.521016757] [interbotix_robot_manipulation]: 
+	Arm Group Name: arm
+	Moving Time: 2.00 seconds
+	Acceleration Time: 0.30 seconds
+	Drive Mode: Time-Based-Profile
+[INFO] [1781368556.521492803] [interbotix_robot_manipulation]: Initialized InterbotixArmXSInterface!
+[INFO] [1781368557.026275013] [interbotix_robot_manipulation]: 
+	Gripper Name: gripper
+	Gripper Pressure: 50.0%
+[INFO] [1781368557.026722399] [interbotix_robot_manipulation]: Initialized InterbotixGripperXSInterface!
+[static] Moving to home & grasping (no payload, matches identification) …
+[static] Waiting 2 s — ensure the recorder is running …
+[static] pose  0/14  cmd=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+[static] pose  1/14  cmd=[0.0, -1.2, 0.0, 0.0, 0.0, 0.0]
+[static] pose  2/14  cmd=[0.0, -0.6, 0.0, 0.0, 0.0, 0.0]
+[static] pose  3/14  cmd=[0.0, 0.2, 0.0, 0.0, 0.0, 0.0]
+[static] pose  4/14  cmd=[0.0, -0.5, 1.0, 0.0, 0.0, 0.0]
+[static] pose  5/14  cmd=[0.0, -0.5, 0.5, 0.0, 0.0, 0.0]
+[static] pose  6/14  cmd=[0.0, -0.8, 0.8, 0.0, 0.0, 0.0]
+[static] pose  7/14  cmd=[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+[static] pose  8/14  cmd=[0.0, -0.6, 0.5, 0.0, 1.2, 0.0]
+[static] pose  9/14  cmd=[0.0, -0.6, 0.5, 0.0, -1.2, 0.0]
+[static] pose 10/14  cmd=[0.0, -0.6, 0.5, 1.2, 1.0, 0.0]
+[static] pose 11/14  cmd=[0.0, -0.6, 0.5, -1.2, 1.0, 0.0]
+[static] pose 12/14  cmd=[0.0, -0.6, 0.5, 1.2, -1.0, 0.0]
+[static] pose 13/14  cmd=[0.0, -0.9, 0.7, 0.0, 0.8, 0.0]
+[static] pose 14/14  cmd=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+[static] Returning to sleep pose …
+[static] Wrote pose sidecar → data/static_gravity_20260613_183554.poses.json

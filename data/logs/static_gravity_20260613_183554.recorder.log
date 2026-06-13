@@ -1,0 +1,12 @@
+[INFO] [1781368555.880288675] [joint_state_recorder_200hz]: Recorder ready  →  data/static_gravity_20260613_183554.csv  (duration=270 s, no throttle — every message recorded)
+[INFO] [1781368555.881392934] [joint_state_recorder_200hz]: First joint-state message received — recording started (time base: header stamp).
+RECORDING_STARTED
+[WARN] [1781368556.790406630] [joint_state_recorder_200hz]: time column went backwards at row 234 (1.325645 → 0.920662)
+[WARN] [1781368588.639982076] [joint_state_recorder_200hz]: time column went backwards at row 6603 (33.166620 → 32.771011)
+[WARN] [1781368620.486670983] [joint_state_recorder_200hz]: time column went backwards at row 12972 (65.013280 → 64.617560)
+[INFO] [1781368716.845753476] [joint_state_recorder_200hz]: Signal 2 received — stopping.
+
+[recorder] Saved 32215 rows.
+[recorder] Span 161.0 s  →  effective rate 200.1 Hz
+[recorder] Dropout-sentinel rows (all arm joints ≈ −π): 1
+[recorder] WARNING: 6 non-monotonic time steps — inspect with check_collection.py
