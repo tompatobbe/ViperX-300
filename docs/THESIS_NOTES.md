@@ -642,3 +642,186 @@ gravity — pointing at the dual-motor ×2 assumption, the effective torque
 constant, or current-reading semantics. Needs a dedicated static experiment
 (hold known poses, read currents, compare to CAD gravity) before the next
 identification round.
+
+### Resolution (2026-06-13, later): the gravity-only static benchmark closes the deficit
+
+**Method — gravity isolation at standstill (`compare_gravity.py`).** The
+key idea, which is also clean dissertation material: in a *held* pose
+q̇ = q̈ = 0, so `M(q)q̈` and `C(q,q̇)q̇` vanish and the measured joint current
+collapses to `G(q) + offset + (small stiction)`. We drove the arm to 15 static
+poses (`data/static_gravity_20260613_183554.csv`), averaged the holding current
+over each dwell, and compared the **pure gravity term G(q)** from four sources:
+measured holding current, the paper model, the factory URDF (Pinocchio
+RNEA(q,0,0)), and our identified `phi` (regressor at q̇=q̈=0, friction columns
+zeroed). Everything is reported in **raw master-motor mA** — the same units as
+the CSV effort column and the paper's functions — which makes the comparison
+*assumption-free*: it never applies k_t or the ×2 dual-motor factor, so it is
+immune to the scale anomaly above. The headline per-joint metric is the gravity
+**swing** (peak-to-peak of G over the poses): a gravity-free model has swing ≈ 0
+while the measured swing is large. Dwells are detected from the velocity signal
+and matched to the nearest commanded pose (residual ≤ 0.05 rad), so no
+CSV-vs-JSON time-base alignment is needed.
+
+**The deficit was a kinematics bug, not an identification dead-end.** Re-running
+on the corrected modified-DH chain (v1.5) restored shoulder gravity decisively.
+Shoulder swing / correlation against the measured static sweep:
+
+| model | shoulder swing (mA) | corr | elbow swing (mA) | mean corr* | mean RMSE_off* (mA) |
+|---|---|---|---|---|---|
+| measured | 1005 | — | 558 | — | — |
+| May v1-4 (pre-fix, invalid) | 204 | 0.86 | 141 | 0.60 | 145 |
+| May v1.5 | 1319 | 0.98 | 74.6 | 0.72 | 125 |
+| **200 Hz v1.5 (`a92e984c`)** | **1604** | **1.00** | **441** | **0.76** | **121** |
+| paper | 1683 | 0.99 | 489 | 0.71 | 132 |
+| factory `vx300s.urdf` | 1883 | 0.88 | 741 | −0.00 | 298 |
+
+*mean over the gravity-bearing joints (shoulder/elbow/wrist_angle);
+waist/wrist_rotate carry ≈ no gravity in this sweep and are excluded.
+
+Three findings stand out:
+
+1. **The shoulder gravity is recovered, and is best-in-class.** The May v1.5
+   model's shoulder swing jumped 204 → 1319 mA (corr 0.86 → 0.98), and the
+   200 Hz model reaches 1604 mA at corr 1.00 — its offset-removed shoulder RMSE
+   (≈149) beats both the paper model and the factory URDF. This is the first
+   model in the project that carries real shoulder gravity *magnitude*, not just
+   the right shape.
+
+2. **Excitation, not structure, explained the missing elbow/wrist gravity.** The
+   May model left the elbow nearly flat (swing 74.6 mA); the richer 200 Hz
+   trajectory recovered it (441 mA ≈ measured 558, ≈ paper 489), and wrist_angle
+   improved 10× (4.2 → 41.8 mA, still the one partly-under-excited joint, vs
+   paper 113). This is direct evidence that the earlier gravity deficit at those
+   joints was a *trajectory-excitation* limitation, removed by the paper-rate
+   re-collection — not a structural defect of the method.
+
+3. **Independent reproduction of the paper's identified gravity.** From our own
+   data and pipeline, with no CAD/reference prior, the 200 Hz v1.5 model lands
+   within ~5–10 % of the paper authors' published gravity at the two dominant
+   joints (shoulder 1604 vs 1683 → 95 %; elbow 441 vs 489 → 90 %). This is the
+   affirmative answer to the reproduction question that the original cross-check
+   (above) had answered "no": the corrected pipeline reproduces a comparable,
+   physically-feasible gravity model.
+
+**The factory URDF is the broken reference at the elbow/wrist, not our model.**
+The convention check `corr(paper G, factory G)` is high at the shoulder (0.89)
+but negative at elbow (−0.09) and wrist (−0.16). The 200 Hz model resolves which
+side is wrong: our model *and* the paper both correlate positively with measured
+at those joints (elbow 0.59 / 0.48; wrist 0.69 / 0.65), while the factory
+`vx300s.urdf` anti-correlates (−0.27 / −0.62). So the factory URDF's elbow/wrist
+gravity is sign-flipped/wrong; "beating the factory URDF" was therefore a low
+bar, and the paper's identified model — not the manufacturer CAD URDF — is the
+proper physical benchmark.
+
+**Reinterpreting the ≈0.63 scale anomaly: standstill stiction, not (only) a
+unit error.** Both physically-grounded models predict ~1.6× the static measured
+holding current (1604/1005 = 1683/1005 ≈ 0.63 — the same factor seen in the
+moving-data regressions). At a true standstill the motor current must balance
+gravity exactly, so a holding current *below* the gravity torque is most
+naturally explained by **gear/transmission stiction supporting part of the
+gravity load at zero velocity**: in motion the actuator must command the full
+gravity torque, but at rest the static-friction band holds part of it, so the
+holding current under-reads gravity. Under this reading the identified model
+(fit from motion) and the paper both recover the *true, larger* gravity, and it
+is the static holding current that is biased low. Practical consequence for
+validation: on the static dataset, treat **shape/correlation as ground truth and
+absolute amplitude as a lower bound**. This does not yet fully exonerate the ×2
+dual-motor / k_t assumption (the factor appears on moving data too), but it
+reframes the anomaly from "our model is too light" toward "the static
+measurement is stiction-biased" — a falsifiable claim (e.g. holding-current
+hysteresis between approach directions would expose the stiction band).
+
+**Status.** The 200 Hz v1.5 model (`cfg-a92e984c`) is the gravity-valid
+deliverable candidate: it carries shoulder and elbow gravity, reproduces the
+paper's published gravity, and beats the factory URDF on every gravity joint.
+Remaining items: confirm the stiction-bias hypothesis, and the still-mild
+wrist_angle under-excitation. The `forearm_roll` joint shows a large measured
+holding-current swing (1641 mA) that *no* model predicts and that is physically
+implausible as gravity on a roll axis — almost certainly stiction/cogging or a
+current artifact, and excluded from the gravity-joint means.
+
+## Standstill stiction: the holding current under-reads gravity (2026-06-13)
+
+This is the deeper reading of the "≈0.63 scale anomaly", promoted to its own
+topic because it is a clean, calibration-independent physical observation with a
+falsifiable test — good Discussion material.
+
+**The observation, stated to be calibration-free.** The champion model was
+identified from *moving* 200 Hz torque (mA→Nm via EFFORT_SCALE); its gravity
+prediction is then converted *back* to mA for the static comparison, so
+EFFORT_SCALE — and with it the k_t = 2.409 Nm/A constant and the ×2 dual-motor
+factor — **cancels through the round trip**. The surviving statement is purely
+about the robot's own current register:
+
+> the gravity torque inferred from *motion* (champion 1604 mA at the shoulder,
+> ≈ paper's independently-identified 1683) is ~1.6× the current the motor
+> actually draws to *hold* the same pose (measured 1005 mA).
+
+Because the comparison is internal to the measured data in raw current units, the
+k_t / ×2 calibration question **cannot** be its cause: that anomaly lives only in
+the separate measured-vs-CAD-in-Nm comparison. The static-vs-moving gap is a real
+physical fact about the drivetrain.
+
+**Mechanism.** At a held pose the joint is in static equilibrium, so
+`τ_motor + τ_static_friction = τ_gravity`. Static friction resists impending
+motion, and the motion gravity would induce is the link *falling*; hence static
+friction acts in the anti-gravity direction and takes up part of the load:
+
+    τ_motor = τ_gravity − τ_static_friction ,    0 ≤ |τ_static_friction| ≤ τ_breakaway
+
+so the holding current **under-reads** gravity by up to the breakaway (stiction)
+torque. In the ≈270:1-geared Dynamixels the reflected drivetrain friction at the
+joint is large, so a sizeable fraction of gravity is held "for free". Once the
+joint *moves*, friction becomes kinetic and opposes the motion (it no longer
+supports gravity), and the controller must command the full gravity torque —
+which is exactly why a model identified from motion, and the paper's, both
+recover the true, larger value while the standstill current is the outlier.
+
+**Why the model, not the holding current, is the gravity ground truth.** Two
+*independent* identifications from motion (ours, from our data; the paper's, from
+theirs) agree to ~5 % at the shoulder. The static benchmark isolates pure G(q) at
+q̇=q̈=0 and shows the champion matches the paper there too. The single static
+holding current is the lone low reading, with a mechanism that explains *only*
+that reading. So for control we feed forward the model's gravity, not the
+holding current; at the instant of holding this merely presses the joint gently
+into its stiction band — conservative and harmless, mopped up by feedback.
+
+**Magnitude (wants measurement, not faith).** The shoulder gap ≈ 600 mA ≈ ~1.4 Nm
+of stiction support, vs the model's identified *kinetic* Coulomb term ≈ 0.44 Nm
+for the upper-arm link. Stiction exceeding kinetic friction is the expected
+Stribeck behaviour, but ~3× is on the high side — hence the test below rather
+than a claimed number. `forearm_roll`'s implausible 1641 mA static swing (gravity
+≈ 0 on a roll axis) is plausibly the extreme of the same effect: holding current
+dominated by a large stiction/cogging band.
+
+### TODO — the test that confirms and quantifies it: holding-current hysteresis
+
+Static friction settles *anywhere* in [−τ_breakaway, +τ_breakaway] depending on
+the **direction of the last motion before stopping**. So hold each pose twice,
+approached from opposite directions:
+
+- **ascending** approach: final motion *increases* the joint angle (waypoint at
+  q* − δ → q*);
+- **descending** approach: final motion *decreases* it (waypoint at q* + δ → q*).
+
+Predictions (per gravity-bearing joint, in raw mA):
+1. The two holding currents differ by **2·τ_breakaway** — a hysteresis loop whose
+   width *is* the stiction band. A near-zero gap falsifies the hypothesis (look
+   instead at current-reading offset or dual-motor load sharing).
+2. Their **midpoint** cancels the ±stiction term and should land on the **model /
+   paper gravity** (≈ 1604 mA at the shoulder), while a single-direction hold sits
+   one half-band below it. This both quantifies stiction *and* re-confirms the
+   model's gravity at standstill, friction-free.
+
+Tooling (added 2026-06-13): mover `control/stiction_hysteresis_poses.py`
+(bidirectional approach, ascending+descending per target), wrapper
+`collect_stiction_hysteresis.sh` (reuses the proven 200 Hz recorder), analysis
+`tools/analyze_stiction_hysteresis.py` (per-joint band width, midpoint, and the
+midpoint-vs-model check). Same safety envelope as the static experiment
+(position mode, slow blocking moves, no payload, run_trajectories limits).
+
+**Status.** The 200 Hz v1.5 model (`cfg-a92e984c`) is the gravity-valid
+deliverable candidate: it carries shoulder and elbow gravity, reproduces the
+paper's published gravity, and beats the factory URDF on every gravity joint.
+Remaining items: run the hysteresis test above to settle the stiction band, and
+the still-mild wrist_angle under-excitation.

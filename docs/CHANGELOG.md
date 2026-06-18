@@ -9,6 +9,7 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+<<<<<<< HEAD
 ## 2026-06-18 — END TO END: commanded the EE to a target position on the real arm
 
 **Area:** `control/pd_grav_control.py` (velocity glitch-rejection fix) · full goal
@@ -272,6 +273,299 @@ the last open question before committing to PD + gravity-compensation control.
   present current read is the master's — same mA convention as the static
   analysis. The midpoint `g` should be compared to the identified gravity current
   in the **same** master-mA space.
+=======
+## 2026-06-14 — Control phase started: `control/pdg_control.py` (PD + gravity-compensation, current mode)
+
+**Area:** new control script · uses the identified model in closed loop · control
+phase kickoff
+
+### Problem / Motivation
+The validated-URDF gate is met, so the control phase begins. The existing
+`control/trq.py` was jerky in practice. Root causes on inspection: gravity
+compensation was commented out (so an integral term wound up fighting gravity),
+it fed back the *double-differentiated* (noisy) encoder acceleration, and used
+large P+I gains with no model feed-forward. The paper authors'
+`PD_GravityCompensation.py` (external/paper_model) is the opposite and is proven
+on this exact hardware: 200 Hz, current mode, per-joint PD + gravity feed-forward
+in mA, no integrator.
+
+### Change
+New `control/pdg_control.py`: a clean PD+G current controller,
+`u(mA) = soft·[ G(q) + Kp·(q_ref−q) + Kd·(q̇_ref−q̇) ]`. It follows the paper's
+proven structure (gains default to their tuned vx300s values; commands in mA) but
+(a) feeds forward gravity from **our identified model** (champion URDF via
+Pinocchio, Nm→mA by 1/EFFORT_SCALE) with the paper's G as a `--gravity paper`
+cross-check; (b) damps with the *measured* velocity (no differentiation, no
+acceleration-feedback term); (c) drives a smooth cubic reference that **starts at
+the current pose** so the error/command begin near zero (no startup lurch);
+(d) soft-starts the command 0→1 over 0.5 s; (e) switches the arm back to
+**position mode on Ctrl-C** so it holds rather than falls. Defaults to a
+gravity-comp **hold** (regulate to the current pose) for safe first bring-up;
+`--goal` commands a move. `--gravity-scale` exposed (1.0 = physical; the stiction
+finding says holding needs ~0.6× but full G is correct + conservative). Current
+clamp default 2000 mA (paper used 3200).
+
+### Evidence
+Software only (no hardware yet): syntax-checks; the cubic reference verified
+(zero velocity at t=0 and t≥T, smooth in between). Hardware bring-up pending
+(HANDOVER).
+
+### Impact
+First model-in-the-loop controller; foundation for computed-torque tracking and
+the paper's ERG (which adds a reference governor on top of PD+G — needs the
+paper's mass matrix M, currently MATLAB-only via their socket server). No
+identification results affected.
+
+### Open questions / assumptions
+- Gains are the paper's; may need light retuning for our gravity model / current
+  limit. Start in hold mode, then small goals.
+- The ERG layer (`external/paper_model/ERG.py`) needs M(q); porting M,C to Python
+  (or standing up the MATLAB socket) is the next control sub-task if ERG is in
+  scope.
+
+---
+
+## 2026-06-14 — Stiction-hysteresis experiment: tooling to test the standstill-stiction hypothesis
+
+**Area:** new tooling (mover + collection + analysis) · the ≈0.63 scale anomaly /
+standstill-stiction question
+
+### Problem / Motivation
+The static gravity benchmark found the holding current under-reads the
+identified/paper gravity by ~1.6× (the "0.63 anomaly"). The leading,
+calibration-independent explanation is that gear stiction supports part of the
+gravity load at standstill (THESIS_NOTES "Standstill stiction"). It needs a
+direct hardware test.
+
+### Change
+The mechanism is falsifiable: static friction settles at opposite ends of its
+band depending on the *direction of the last motion*. New tooling holds each
+target pose from **both** approach directions and measures the difference.
+- `control/stiction_hysteresis_poses.py` — mover; 6 gravity-loaded targets, each
+  held "ascending" (waypoint q*−δ) and "descending" (q*+δ) on the swept joints
+  (shoulder/elbow/wrist_angle, δ=0.20 rad). Same safety envelope as
+  `static_gravity_poses.py` (position mode, slow blocking moves, clipped to
+  limits, grasped + no payload). Sidecar logs target/approach/dwell-window.
+- `collect_stiction_hysteresis.sh` — gated wrapper, reuses the proven 200 Hz
+  recorder (mirrors `collect_static_gravity.sh`).
+- `tools/analyze_stiction_hysteresis.py` — per joint: band = I(desc)−I(asc) ≈
+  2·τ_breakaway, and midpt = ½(asc+desc) which cancels stiction → should ≈ model
+  gravity. Reports in raw mA (+Nm via EFFORT_SCALE); optional `--phi/--urdf/paper`
+  overlay to check midpt − model ≈ 0. Reuses `compare_gravity` predictors and
+  dwell detection; runs without ROS for `--phi`/paper.
+
+### Evidence
+Tooling only (no hardware run yet): mover syntax-checks, analysis tool imports
+and `--help` works. Predictions to test: (1) a non-trivial band (≈0 would falsify
+stiction); (2) midpoint lands on the model gravity (~1604 mA shoulder) while the
+single-direction static hold (1005 mA) sits one half-band below.
+
+### Impact
+Provides the experiment that settles whether the model's gravity (used for
+control feed-forward) is right and the static current is stiction-biased. Does
+not change any model or result. Recommended before/early in the control phase.
+
+### Open questions / assumptions
+- δ=0.20 rad assumed enough to traverse the stiction band; the analysis prints
+  the per-joint band so this is self-checking (tiny/erratic bands ⇒ raise δ).
+- Dwells matched to trials by temporal order + q-consistency (two trials share a
+  target q, so order is needed); the tool warns on any order/target mismatch.
+
+---
+
+## 2026-06-13 — Champion validated on full dynamics (held-out torque): beats the no-model baseline; validated-URDF gate MET → control unblocked
+
+**Area:** validation results · `compare_urdf_performance.py` · model-selection
+gate for the control phase
+
+### Problem / Motivation
+The gravity benchmark validated `G(q)` only. The deliverable URDF must also
+predict torque on a *moving* trajectory (M·q̈ + C·q̇ + G) and, per the
+post-2026-06-13 rule, **beat the no-model baseline** on the rigid-body-only
+per-joint metric — the criterion the gravity-deficit reopening introduced.
+
+### Change / Evidence
+Held-out torque validation of the champion URDF (`cfg-a92e984c`, exported via
+`phi_to_urdf-v1-1`) with `--friction --drop-glitches`.
+
+**First attempt — May 47 Hz run (`traj_run_20260518_143818.csv`): misleading.**
+B beat the factory (−43.6 % RMSE) but came out **−52.7 % vs the no-model
+baseline** on rigid-body RMSE. Diagnosed as a **low-rate-acceleration artifact**:
+shoulder RMSE/MAE ≈ 6 (rare large spikes), and B is the first model with real
+link inertia (1.5 kg upper arm), so `M·q̈` with q̈ differentiated from 46.7 Hz
+data injects spikes the old ≈0-mass models never produced. The friction-fitted
+MAE already showed the model explained the signal (shoulder MAE 0.495 vs baseline
+1.307). Not a fair dynamics test on low-rate data.
+
+**Confirming run — 200 Hz replicate (`traj_run_200hz_20260612_161025.csv`,
+`--stride 4`, clean q̈): gate passes.** Same model, baseline margin flips
+−52.7 % → **+37.4 %**:
+
+| protocol | metric | no-model | factory A | champion B |
+|---|---|---|---|---|
+| rigid-body (primary) | mean RMSE [Nm] | 0.884 | 1.242 | **0.554** (+37.4 % vs baseline) |
+| rigid-body | shoulder R² | −0.13 | −0.55 | **0.671** |
+| friction-fitted | mean RMSE [Nm] | 0.477 | 0.707 | **0.212** (+55.5 % vs baseline) |
+| friction-fitted | R² shoulder / elbow | — | <0 | **0.939 / 0.860** |
+
+B beats the no-model baseline decisively on both protocols and beats the factory
+by 55–70 %. The factory URDF stays *worse* than no-model (−48 %) even with
+friction fitted. (Elbow rigid-body R² is still <0 only because elbow torque is
+offset-dominated; friction-fitted R² 0.86 once the offset is absorbed.)
+
+### Impact
+- **Validated-URDF gate MET.** The champion `cfg-a92e984c` is now validated on
+  both gravity (static benchmark) and dynamics (held-out torque, beats baseline
+  + factory). **The control phase is unblocked.** HANDOVER flipped.
+- Confirms the May-data result was a sampling-rate artifact (same model, clean
+  q̈ → passes), reinforcing "use 200 Hz / clean acceleration for any
+  inertia-sensitive validation."
+- **Corroborates the standstill-stiction reading of the 0.63 anomaly:** B tracks
+  *moving* shoulder torque at R² 0.94 yet over-predicts the *static* holding
+  current ~1.6× — correct in motion, over in hold = the stiction signature.
+
+### Open questions / assumptions
+- The 200 Hz replicate shares the seed-42 trajectory with the training run →
+  proves dynamics fidelity + repeatability, **not** full trajectory-independence.
+  The only independent set (May) is rate-confounded. A clean *and* independent
+  test needs a new different-seed 200 Hz collection (pre-registered tiebreak).
+- forearm_roll is unhelped (R² ≈ 0, RMSE ≈ baseline) — friction/stiction-
+  dominated, not gravity, as the static benchmark showed.
+
+---
+
+## 2026-06-13 — Gravity deficit CLOSED on v1.5: re-identified models recover gravity; 200 Hz model (`cfg-a92e984c`) reproduces the paper's published gravity → new champion
+
+**Area:** identification results (v1.5 re-run) · model selection · the ≈0.63
+scale anomaly · `data/static_gravity_20260613_183554.csv` benchmark
+
+### Problem / Motivation
+The 2026-06-13 cross-check reopened identification: every pre-fix model carried
+almost no gravity. After the modified-DH root-cause fix (sysid 1.4→1.5) the
+models had to be re-identified and re-judged on the gravity-only static
+benchmark (`compare_gravity.py`, entry below).
+
+### Change
+Re-identified the May and 200 Hz models on the corrected v1.5 kinematics (same
+recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL
+--drop-glitches`; 200 Hz adds `--stride 4`) and scored pure gravity G(q) against
+the 15-pose static dataset, in raw master-motor mA.
+- May v1.5: `outputs/npy/traj_run_20260518_143818__sysid_feasible-v1-5__cfg-9ef2c992.npy`
+- **200 Hz v1.5 (new champion): `outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy`**
+
+### Evidence (gravity swing [mA] / corr vs the measured static sweep)
+| model | shoulder swing | corr | elbow swing | mean corr* | mean RMSE_off* |
+|---|---|---|---|---|---|
+| measured | 1005 | — | 558 | — | — |
+| May v1-4 (pre-fix, invalid) | 204 | 0.86 | 141 | 0.60 | 145 |
+| May v1.5 | 1319 | 0.98 | 74.6 | 0.72 | 125 |
+| **200 Hz v1.5 `a92e984c`** | **1604** | **1.00** | **441** | **0.76** | **121** |
+| paper | 1683 | 0.99 | 489 | 0.71 | 132 |
+| factory `vx300s.urdf` | 1883 | 0.88 | 741 | −0.00 | 298 |
+
+*mean over gravity joints shoulder/elbow/wrist_angle.
+
+1. **Shoulder gravity recovered, best-in-class:** May swing 204→1319 (corr
+   0.86→0.98); 200 Hz reaches 1604 at corr 1.00, lowest shoulder RMSE_off of all
+   models. First model in the project carrying real shoulder gravity magnitude.
+2. **Excitation, not structure, explained the missing elbow/wrist:** May elbow
+   swing 74.6 → 200 Hz 441 (≈ paper 489, measured 558); wrist_angle 4.2 → 41.8
+   (paper 113, still mildly under-excited). The richer paper-rate trajectory
+   filled in the elbow.
+3. **Independent reproduction of the paper's gravity** (no CAD prior): 200 Hz
+   model within 5–10 % of the paper at the dominant joints (shoulder 95 %,
+   elbow 90 %) — the affirmative answer the original cross-check lacked.
+4. **Factory URDF is the broken reference at elbow/wrist:** our model and the
+   paper both correlate positively with measured there; the factory
+   anti-correlates (elbow −0.27, wrist −0.62, mean corr ≈ 0). The paper model,
+   not the manufacturer CAD URDF, is the proper benchmark.
+
+### Impact
+- **Champion changes to the 200 Hz v1.5 model `cfg-a92e984c`** (gravity-valid:
+  carries shoulder+elbow gravity, reproduces the paper, beats factory on every
+  gravity joint). HANDOVER updated.
+- The gravity-deficit reopening is **closed for the 200 Hz model**. The
+  identification → validated-URDF gate for the control phase is effectively met
+  on gravity, modulo the open items below.
+
+### Open questions / assumptions
+- **≈0.63 scale anomaly reinterpreted (see THESIS_NOTES "Resolution").** Both
+  the 200 Hz model (from motion) and the paper predict ~1.6× the static holding
+  current (1604/1005 ≈ 0.63). Most plausible cause: **gear stiction supports
+  part of gravity at standstill**, so the holding current under-reads gravity
+  and the model recovers the true value. Treat static amplitude as a lower bound
+  and shape/correlation as ground truth. Does not yet fully clear the ×2/k_t
+  question (the factor also appears on moving data); falsifiable via
+  holding-current hysteresis between approach directions.
+- **wrist_angle** still mildly under-excited (swing 41.8 vs paper 113).
+- **forearm_roll** measured swing 1641 mA is physically implausible as gravity
+  on a roll axis and predicted by no model — stiction/cogging/current artifact;
+  excluded from the gravity-joint means.
+- May v1.5 elbow stayed flat (74.6) — confirms the May trajectory's poor
+  elbow-gravity excitation; the 200 Hz collection is the lever.
+
+
+
+**Area:** new tool `compare_gravity.py` · validation methodology · benchmarks
+our models, the factory URDF and the paper authors' published model against the
+`static_gravity_20260613_183554` dataset
+
+### Problem / Motivation
+The reopened defect is that our identified models carry almost no gravity (G(q)
+nearly constant over configuration) while the measured holding currents are
+strongly pose-dependent — and the friction-fitted torque validation hid it
+(a per-joint offset basis fitted on the test data absorbs a flat model's error).
+We needed a comparison that isolates **gravity alone**, the broken term, and
+that can also score the paper authors' published model — which is not a URDF but
+closed-form symbolic G/M/C in master-motor **mA**.
+
+### Change
+New `compare_gravity.py`. In a held pose q̇=q̈=0, so M q̈ and C q̇ vanish and the
+measured current collapses to `G(q) + offset + stiction`. The script:
+- detects static dwells straight from the velocity signal (all joints
+  |q̇|<thresh for ≥min-dur, discarding a settle window), averages q and effort
+  over each dwell, and matches each to the nearest commanded pose for validation
+  (no CSV/JSON time-base alignment needed — match residual ≤ 0.05 rad here);
+- compares **pure gravity G(q)** from: measured holding current, the paper model
+  (`external/paper_model`, already mA), any URDF (Pinocchio RNEA(q,0,0)), and any
+  of our `phi` .npy (regressor `inverse_dynamics_phi` with friction columns
+  zeroed). Nm predictions → mA via `1/EFFORT_SCALE`;
+- reports everything in **raw master-motor mA** (assumption-free: no k_t, no ×2
+  dual-motor factor — sidesteps the ≈0.63 scale anomaly), per joint: gravity
+  **swing** (peak-to-peak over poses; the headline — a gravity-free model ≈ 0),
+  RMSE/MAE raw and after removing the best per-joint constant offset (= the
+  stiction/bias, isolating gravity *shape*), and correlation. Means are taken
+  over the gravity-bearing joints (shoulder/elbow/wrist_angle), since
+  waist/wrist_rotate carry ~no gravity in this sweep.
+- The paper model (`external/`, .gitignored) is cloned from
+  <https://github.com/MomaniMutaz/ViperX-300-6DoF-Robotic-Arm-Dynamical-Model>.
+
+### Evidence (smoke run: paper + May model `cfg-640cb8ef`, no ROS)
+15 dwells detected, pose-match residual ≤ 0.048 rad. Measured swing [mA]:
+shoulder 1005, elbow 558, **forearm_roll 1641**, wrist_angle 190. The May model
+reproduces only shoulder 204 / elbow 141 / forearm_roll 0.6 — i.e. **~5× too
+flat at the shoulder and essentially zero elsewhere**, quantifying the
+gravity-free defect. The paper model tracks the shoulder shape well (corr 0.99)
+but its swing (1683) overshoots measured (1005) by ~1.6× — ratio 0.60,
+**the ≈0.63 scale anomaly reappearing in raw mA**, assumption-free.
+
+### Impact
+Gives the identification phase a direct, friction-independent gravity metric and
+a physically-correct external reference (the paper G). No results invalidated;
+this is a new diagnostic. Recommended primary check for any re-identified model.
+
+### Open questions / assumptions
+- **forearm_roll** shows a huge measured swing (1641 mA) that neither the paper
+  (194) nor our model (≈0) predicts and that anti-correlates with paper-G
+  (−0.32) — likely stiction/cogging or a frame issue on the roll axis, not
+  gravity; worth isolating before trusting that joint.
+- The 0.60 measured/paper ratio on the shoulder is the cleanest statement yet of
+  the effort-scale anomaly (k_t / dual-motor / current semantics) — now on
+  static data with no inertia/Coriolis confound.
+- The q→paper-G angle convention is assumed identity (paper applies its own
+  q2/q3 offsets internally); the script's paper-vs-factory correlation check
+  (needs a URDF run with ROS) is the validation of that assumption.
+>>>>>>> 0665c46197a821d4dd4d6769437d30fc446051bb
 
 ---
 

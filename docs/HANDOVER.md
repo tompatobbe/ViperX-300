@@ -1,12 +1,104 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-13 (KINEMATICS ROOT-CAUSE FIXED). **Phase:**
-identification **REOPENED** — a DH-convention bug that corrupted every model so
-far has been found and fixed; everything must be re-identified before control.
+**Last updated:** 2026-06-13 (VALIDATED-URDF GATE MET → control unblocked).
+**Phase:** identification **complete for the control gate** — the champion is
+validated on gravity (static benchmark) *and* dynamics (held-out torque, beats
+the no-model baseline + factory). Next phase: **control**.
 
 ---
 
-## ⇒ LAB RE-RUN PLAN (do this — start here)
+## ⇒ CURRENT STATE — validated champion; control unblocked (read this first)
+
+**Identification gate is met.** After the modified-DH fix (v1.5) the models were
+re-identified and validated two ways: the **gravity-only static benchmark**
+(`compare_gravity.py` on `data/static_gravity_20260613_183554.csv`, raw mA) and
+the **held-out torque validation** (`compare_urdf_performance.py`, rigid-body-
+only primary metric + no-model baseline).
+
+**Champion (validated deliverable):**
+- **phi:** `outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy`
+- Recipe: `--method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --stride 4`
+- Carries shoulder **and** elbow gravity; **reproduces the paper's published
+  gravity** (shoulder 95 %, elbow 90 %, no CAD prior); beats the factory URDF on
+  every gravity joint. Shoulder swing 1604 mA @ corr 1.00; mean over gravity
+  joints corr 0.76 / offset-removed RMSE 121 mA (paper 0.71 / 132; factory
+  −0.00 / 298). The May v1.5 model (`cfg-9ef2c992`) fixed the shoulder but left
+  the elbow under-excited (swing 74.6 mA) — the 200 Hz trajectory is what fills
+  the elbow in. Full table + takes: CHANGELOG "Gravity deficit CLOSED on v1.5"
+  and THESIS_NOTES "Resolution (2026-06-13, later)".
+- **Dynamics-validated (held-out torque):** on the 200 Hz replicate
+  (`traj_run_200hz_20260612_161025.csv`, clean q̈) the champion **beats the
+  no-model baseline** — rigid-body mean RMSE 0.554 Nm (+37.4 % vs baseline 0.884;
+  shoulder R² 0.671) and friction-fitted 0.212 Nm (+55.5 %; shoulder R² 0.939,
+  elbow 0.860), beating the factory by 55–70 %. NB the May 47 Hz run gave a
+  misleading −52.7 % — a low-rate-q̈ artifact (real inertia × noisy acceleration);
+  use 200 Hz for inertia-sensitive validation. CHANGELOG "Champion validated on
+  full dynamics".
+
+**Re-validate / reproduce the champion:**
+```bash
+# (identification needs no ROS)
+python3 sysid_feasible.py data/traj_run_200hz_20260612_131613.csv \
+    --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL --drop-glitches --stride 4 --no-plot
+source /opt/ros/humble/setup.bash   # gravity comparison needs Pinocchio for the URDF
+python3 compare_gravity.py --urdf urdf/vx300s.urdf \
+    --phi outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy --plot
+# held-out dynamics (use 200 Hz data — clean q̈; NOT the 46.7 Hz May run):
+python3 compare_urdf_performance.py --drop-glitches --friction --stride 4 \
+    --urdf-b outputs/urdf/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c__phi_to_urdf-v1-1__cfg-3ef0a00c.urdf \
+    --csv data/traj_run_200hz_20260612_161025.csv
+```
+
+**⇒ PENDING LAB TASK (script ready, just needs hardware) — PD+G controller bring-up.**
+First control-phase script `control/pdg_control.py` is written + software-checked
+(replaces the jerky `trq.py`: PD + gravity feed-forward from OUR model, no
+integrator, measured-velocity damping, smooth cubic ref from the current pose,
+reverts to position mode on Ctrl-C). Bring up when at the bench (driver in its own
+terminal; keep e-stop in reach):
+```bash
+source /opt/ros/humble/setup.bash
+python3 control/pdg_control.py                 # 1) gravity-comp HOLD (safest) — should hold pose, not sag
+python3 control/pdg_control.py --gravity paper #    cross-check vs the paper's G
+python3 control/pdg_control.py --goal 0 -0.6 0.5 0 0.4 0 --ramp 4   # 2) small goal move
+```
+Tune `--gravity-scale` if it sags (under) / stiffens (over); raise
+`--current-limit` (default 2000 mA) toward 3200 only once it behaves. Then the
+control extensions: (a) add computed-torque feed-forward `M·q̈_ref + C·q̇_ref`
+from the model to pdg_control.py; (b) ERG (`external/paper_model/ERG.py`) needs
+M(q) — port M,C to Python or stand up the paper's MATLAB socket. Details:
+CHANGELOG 2026-06-14 "Control phase started".
+
+**⇒ PENDING LAB TASK (tooling ready, just needs hardware) — stiction hysteresis.**
+Tests/settles the ≈0.63 scale anomaly = the standstill-stiction hypothesis
+(model & paper predict ~1.6× the static holding current; gear stiction likely
+holds part of gravity at rest). Tooling is built and checked in; just run it when
+back at the bench (driver in its own terminal first):
+```bash
+bash collect_stiction_hysteresis.sh            # holds each pose ascending + descending
+python3 tools/analyze_stiction_hysteresis.py --csv data/stiction_hyst_<stamp>.csv \
+    --phi outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c.npy
+```
+Expect: (1) a non-trivial hysteresis band per joint (band = I(desc)−I(asc) ≈
+2·τ_breakaway; ≈0 would falsify stiction); (2) the midpoint ½(asc+desc) lands on
+the model gravity (~1604 mA shoulder) while the single-direction static hold
+(1005 mA) sits one half-band below. Full rationale: THESIS_NOTES "Standstill
+stiction"; tooling: CHANGELOG 2026-06-14. Until then treat the static-benchmark
+amplitude as a lower bound and shape/corr as ground truth; the ×2/k_t question is
+separate (lives only in the measured-vs-CAD-Nm comparison).
+
+**Other open items (not blocking gravity, for the write-up / next round):**
+- **wrist_angle** still mildly under-excited (swing 41.8 vs paper 113).
+- **forearm_roll** measured swing 1641 mA is not gravity (roll axis; no model
+  predicts it) — stiction/cogging/current artifact; excluded from means.
+- **Elbow/wrist convention:** the factory `vx300s.urdf`, not our model, is the
+  broken reference at those joints (it anti-correlates with measured). The paper
+  is the proper benchmark.
+- Full inverse-dynamics (M,C) comparison vs the paper is still deferred (their
+  M,C are MATLAB-only); gravity carried the diagnostic value for this phase.
+
+---
+
+## ⇒ LAB RE-RUN PLAN (historical — the re-run this produced is now done)
 
 **What changed (one line).** `sysid_feasible.py` was running the modified-DH
 `DH_PARAMS` table through a *standard*-DH transform + Newton–Euler recursion, so
