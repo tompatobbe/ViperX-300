@@ -9,6 +9,272 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-18 — END TO END: commanded the EE to a target position on the real arm
+
+**Area:** `control/pd_grav_control.py` (velocity glitch-rejection fix) · full goal
+pipeline validated on hardware
+
+### Result
+Ran the complete pipeline on the real arm: target EE position [0.30, 0, 0.40] m →
+`ik_solve` → joint targets → `pd_grav_control --hold-pose` held the EE there for
+**25 s on URDF gravity**. Kinematics are exact (commanded setpoint FK = target to
+<0.1 mm). Real-world EE accuracy at the settled pose: **|error| ≈ 46 mm**
+([−30, +17, +30] mm), dominated by a **+0.105 rad shoulder droop** — i.e. the
+*dynamic* shoulder-gravity over-prediction (first-moment error), not kinematics.
+
+### Fix (this entry's code change)
+The 25 s hold ended on a **false velocity kill**: a single sample read 100 rad/s
+on all joints (a timer-burst near-zero `dt` makes Δq/dt explode). Added glitch
+rejection to the velocity filter — samples with `dt < 4 ms` or a non-physical
+estimate (>8 rad/s; the arm tops out ~3–4) reuse the last filtered velocity and
+don't advance the filter state. Hold itself was stable (elbow droop +0.004,
+jitter 0.010 rad over 25 s).
+
+### Impact
+The thesis goal — hold via URDF gravity → FK → IK → command the EE anywhere — is
+demonstrated. The accuracy bottleneck is now clearly the shoulder gravity model;
+two complementary fixes: (a) re-identify the shoulder first-moment; (b) add an
+**integral term** (PID + gravity comp) to drive steady-state droop → 0 despite the
+model error. Either would shrink the 46 mm.
+
+### Open questions / assumptions
+- 46 mm is at one pose; EE error will vary with the shoulder load (pose-dependent
+  bias). Map it across poses for a thesis figure.
+
+---
+
+## 2026-06-18 — Inverse kinematics (`tools/ik_solve.py`): close the EE-pose → joint-target loop
+
+**Area:** `tools/ik_solve.py` (new) · roadmap step 3 · same URDF/Pinocchio model as
+the controller
+
+### Problem / Motivation
+To "command the end-effector to any position" we need IK: desired EE pose → joint
+angles to use as the controller's setpoint.
+
+### Change
+New damped-least-squares (Levenberg–Marquardt) IK on the EE frame Jacobian
+(`ee_link`), using the identified URDF via Pinocchio — position-only by default
+(the 6-DoF arm leaves orientation free), `--rpy` for a full 6-DoF pose. Clamps to
+URDF joint limits each iteration and checks the result against the controller's
+conservative software limits; prints a ready-to-run `pd_grav_control --hold-pose`
+command. Workflow: `ik_solve --xyz X Y Z` → joints → controller holds the EE there.
+
+### Evidence
+Round-trip (IK of the test-pose EE position) recovers the pose to **0.10 mm**;
+a fresh target [0.30, 0, 0.40] converges to **0.06 mm**, within soft limits. Needs
+ROS sourced for real Pinocchio.
+
+### Impact
+Roadmap steps 3 and (point-to-point) 4 are functional: the full goal pipeline —
+hold via URDF gravity → FK → IK → command EE anywhere — now exists. Smooth
+time-parameterized `q_ref(t)` trajectory tracking is the remaining refinement.
+
+### Open questions / assumptions
+- Position-only IK picks *an* orientation (redundancy); use `--rpy` to constrain.
+- IK does not yet check self-collision; targets near limits should be eyeballed.
+
+---
+
+## 2026-06-18 — URDF-in-the-loop: gravity (and FK) from the identified URDF via Pinocchio
+
+**Area:** `control/pd_grav_control.py` · puts the identified URDF at the centre of
+the control stack (gravity now, FK added, IK next) · see `CONTROL_ROADMAP.md`
+
+### Problem / Motivation
+The controller computed gravity from the φ vector. The thesis goal is to control
+*from the URDF*, and the same URDF model also supplies forward/inverse kinematics
+— so loading it once with Pinocchio unifies gravity + FK + IK.
+
+### Change
+Added `--gravity-source {urdf,phi}` (default `urdf`) and `--urdf` (default the
+validated 200 Hz URDF `…cfg-9ef2c992…cfg-3ef0a00c.urdf`). In URDF mode gravity =
+`pin.computeGeneralizedGravity` ÷ `EFFORT_SCALE` (Pinocchio joint order already
+matches `ARM_JOINTS` for this URDF). Graceful fallback to φ if real Pinocchio is
+unavailable (gated on `hasattr(pin,'buildModelFromUrdf')` — the ROS gotcha).
+Added `ee_pose(q)` (forward kinematics of frame `ee_link`); startup now prints the
+gravity source, a **URDF↔φ equivalence self-check**, and the **EE pose (FK)**.
+
+### Evidence
+URDF gravity matches the φ vector to **1.3e-7 Nm** over 50 random q; gravity at
+home/test poses identical to the φ values used in all prior runs (shoulder −791 /
+−233 mA). FK gives sensible EE positions (home [0.36,0,0.56] m). So behavior is
+unchanged; only the source of the (identical) gravity moved to the URDF.
+
+### Impact
+Roadmap steps 1b (URDF gravity) and 2 (FK) are implemented; IK (step 3) is next,
+from the same Pinocchio model. Requires ROS sourced for real Pinocchio (the
+controller already runs in that environment).
+
+### Open questions / assumptions
+- EE frame assumed `ee_link`; the identified URDF is arm-only (nq=6, no gripper).
+- Hardware re-confirmation of an unchanged hold in URDF mode is pending.
+
+---
+
+## 2026-06-18 — RESULT: model-based PD+gravity-comp holds the arm (dual-motor joints included)
+
+**Area:** `control/pd_grav_control.py` · first **hardware-confirmed** model-based
+control result · resolves the dual-motor current-control question
+
+### Problem / Motivation
+First hardware bring-up of the PD+gravity-comp regulator. Early runs looked like
+the dual-motor joints (shoulder/elbow, which have shadow motors) could not be
+torque-controlled — the elbow dropped under current control. Needed to determine
+whether that was a hardware limitation or a controller bug.
+
+### Change / investigation (chronological, all in `pd_grav_control.py`)
+Iterative hardware debugging fixed a chain of real bugs, none of which was a
+hardware limit:
+1. Setpoint captured from a bogus first `joint_states` (all −π) → settle + median
+   + joint-limit gate.
+2. **Never command zero current** on stop/kill — it dropped the gravity-loaded
+   elbow to the floor; park straight to position mode (servo PID holds).
+3. **Mode-switch transient**: switching position→current torque-cycles the
+   motors (limp window); the heavy elbow free-falls ~0.5 rad before control
+   engages and enters at ~2.9 rad/s.
+4. Kill debounce — the mode switch emits a 1-sample garbage position reading
+   (jumps to the joint limit) and a velocity glitch.
+5. **Ramped setpoint** (capture post-switch position, ramp reference to q_d over
+   `--recover-time`; kills use tracking error) → gentle recovery, no violent
+   over-correction that previously coupled into the shoulder.
+6. Removed the current-blend handoff (it muzzled control authority during the
+   transient) and switched the Kd damping term to a **filtered finite-difference
+   velocity** — the raw Dynamixel velocity register is too noisy/underreported
+   (THESIS_NOTES) to damp with.
+
+### Evidence (hardware, α=1.0, gain×0.5, test pose [0,−0.6,0.5,0,0,0])
+Two runs held **15–18 s** with the elbow at the setpoint: **droop −0.00/−0.06 rad,
+jitter std ≈ 0.0005 rad (0.03°)** — a stable, non-oscillating hold. The elbow
+settled at **−594 mA, essentially its model gravity (−602 mA)** with zero droop,
+i.e. the identified model carries the dual-motor elbow. Shoulder held with
++0.05–0.07 rad droop. **The "dual-motor can't be torque-controlled / shadow gives
+half torque" hypothesis is FALSIFIED.** Remaining kills were all re-runs *without*
+re-posing (degraded start) — operational, not a controller fault.
+
+### Impact
+The thesis' control half has a working model-based controller. Open items:
+(a) the ~0.59 rad entry dip from the mode-switch limp window (benign, recovers in
+~2.3 s; polish by engaging from a low-gravity state / trajectory lead-in);
+(b) α sweep to read the per-joint gravity scale from steady-state droop;
+(c) shoulder/wrist droop suggests their model gravity is slightly off-scale.
+
+### Open questions / assumptions
+- Operational: must `set_pos` to a clean pose before each run.
+- Base must be physically secured — an early underdamped oscillation nearly
+  tipped the platform.
+- forearm_roll FF uses its measured holding current (model known-bad there).
+
+---
+
+## 2026-06-18 — PHASE TRANSITION: first model-based controller (PD + gravity compensation)
+
+**Area:** `control/pd_grav_control.py` (new) · starts the thesis' control half ·
+feeds forward the identified gravity model · (hardware results: see the
+2026-06-18 RESULT entry above)
+
+### Problem / Motivation
+The control phase was gated on a validated gravity model. With the DH fix and the
+static-gravity confirmation (2026-06-13: shoulder gravity SHAPE r=0.997 in the
+real world; verdict "safe to start PD+gravity-compensation"), that gate is
+cleared. `control/trq.py` already had a current-mode PID cascade but with gravity
+compensation **commented out** (the Pinocchio path, lines ~376–379) — so no
+model-based control had actually run.
+
+### Change
+New PD + gravity-compensation **regulator** (holds a fixed setpoint, no
+trajectory yet). Law per joint, in mA:
+`u = Kp·(q_d − q) − Kd·q̇ + α·G_mA(q)`, where `G_mA(q)` is the IDENTIFIED gravity
+evaluated exactly as the static experiment validated it — `sysid_feasible`
+Newton-Euler ID at q̇=q̈=0, friction zeroed, divided by `EFFORT_SCALE` →
+master-motor mA (pure numpy, no Pinocchio in the loop). The gravity source is the
+200 Hz model `…cfg-9ef2c992.npy`.
+
+Safety improvements over `trq.py`: (1) **bump-free handoff** — read each joint's
+position-mode holding current and blend the command from there to the full law
+over `--ramp-in` s, so the arm stays gravity-supported through the mode switch
+(trq.py ramped from zero current, momentarily unsupporting it); (2) pure setpoint
+regulation; (3) per-joint soft position limits + current caps; (4) velocity /
+position-error kill switches; (5) SIGINT parks the arm in **position mode** (its
+PID holds the pose) rather than leaving it limp at zero current (which would
+collapse a loaded arm).
+
+### Evidence
+Offline gravity sanity (no ROS) at the 200 Hz model: waist ≈ 0 mA (gravity-free
+axis ✓), shoulder −791 mA at home → −233 mA folded back (q=[0,−0.6,0.5,0,0,0]) ✓,
+elbow ≈ −600 mA. Two flags: forearm_roll shows a spurious +150 mA even at home
+(the known joint-4 defect, CHANGELOG 2026-06-13) so its FF is untrustworthy;
+shoulder at home (791 mA) is near its 900 mA cap → bring-up must start at the
+folded test pose, not home.
+
+### Impact
+Opens the control half of the thesis. The **α sweep is also a clean closed-loop
+resolution of the 0.58 anomaly**: the gravity gain α that zeroes the steady-state
+droop (q_d − q) is the true gravity scale — α≈1 ⇒ identified gravity correct
+(0.58 was a position-mode stiction artifact) and precision computed-torque is
+viable; α≈0.58 ⇒ a real scale error remains. The regulator logs droop per run.
+
+### Open questions / assumptions
+- Default PD gains (`KP_BASE`/`KD_BASE`, `--gain-scale 0.5`) are conservative
+  guesses pending hardware tuning.
+- forearm_roll FF is known-bad; expect ~0.25 rad droop there at α=1 until joint 4
+  is fixed — consider zeroing its FF for clean shoulder/elbow tuning.
+- Master-mA command convention matches the identification/static-experiment space
+  (driver mirrors master→shadow on dual-motor shoulder/elbow).
+
+---
+
+## 2026-06-18 — Breakaway-current (stiction) test tooling
+
+**Area:** `control/breakaway_current.py` (new) · methodology for resolving the
+≈0.58 static-current anomaly · no results yet (hardware run pending)
+
+### Problem / Motivation
+The static-gravity experiment (2026-06-13) found steady holding current is
+~0.58× the identified gravity current with *perfect* gravity shape (shoulder
+r=0.997). The leading explanation is **gearbox stiction**: at standstill the
+geared XM540 holds part of the load by static friction, so the position-mode
+servo PID settles at the **low edge** of a stiction band rather than at true
+gravity. This needed a direct, model-free measurement to either confirm stiction
+(→ gravity model correct, PD+G safe) or expose a real gravity scale error.
+
+### Change
+New single-joint current-control test, built on the safe pattern in
+`tools/test_waist_current.py` (one joint in current mode, all others hold
+position; clean revert to position mode). For a joint at a fixed pose it ramps
+commanded current up from the measured position-mode holding current until the
+joint breaks away (`I_break+ = g + f`), then ramps down (`I_break- = g - f`),
+giving:
+- **stiction** `f = (I_break+ − I_break−)/2`
+- **stiction-free gravity** `g = (I_break+ + I_break−)/2`
+
+Safety: ramp starts at the actual holding current (no jump, model-free baseline);
+small steps; breakaway caught at a few-degrees position deviation → joint
+immediately handed back to its position PID and re-homed; hard current cap
+(`--max-current`, default 600 mA) and absolute abort window. Logs a CSV trace +
+results JSON to `data/`.
+
+### Evidence
+Pending — script byte-compiles; physics/safety reasoning above. Hardware run
+sequence: `waist` (gravity-free control, validates the rig with no runaway risk),
+then `shoulder` and `elbow` (the dual-motor geared joints the hypothesis targets).
+
+### Impact
+Resolves (or refutes) the stiction interpretation of the 0.58 factor and yields
+an independent gravity estimate per pose to cross-check the identified model —
+the last open question before committing to PD + gravity-compensation control.
+
+### Open questions / assumptions
+- `JointSingleCommand` cmd is interpreted as current (mA) in current mode and as
+  position (rad) in position mode — same convention `test_waist_current.py` and
+  `vel_osc.py` rely on.
+- Dual-motor joints (shoulder/elbow): commanding the master drives the shadow;
+  present current read is the master's — same mA convention as the static
+  analysis. The midpoint `g` should be compared to the identified gravity current
+  in the **same** master-mA space.
+
+---
+
 ## 2026-06-13 — ROOT CAUSE FOUND & FIXED: modified-DH parameters were run through a standard-DH kinematic chain
 
 **Area:** `sysid_feasible.py` `_dh_transform` + `_ne_forward_pass` (FIXED,

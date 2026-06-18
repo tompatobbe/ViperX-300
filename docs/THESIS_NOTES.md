@@ -15,6 +15,91 @@ and how to frame it in the thesis.
 
 ---
 
+## Model-based gravity-compensation control on the real arm (control phase)
+
+**What this is.** The control half of the thesis: a controller that uses the
+*identified* dynamic model. First step is PD + gravity-compensation **regulation**
+in Dynamixel current (torque) mode: `u = Kp(q_d−q) − Kd·q̇ + α·G(q)`, where `G(q)`
+is gravity from our identified φ (the validated 200 Hz model), converted to
+master-motor mA via `EFFORT_SCALE`. Implemented in `control/pd_grav_control.py`.
+
+**Headline result (2026-06-18).** It holds the arm: a stable, non-oscillating
+regulation with elbow droop ≈ 0 and jitter ≈ 0.0005 rad (0.03°), the elbow
+settling at its model-predicted gravity current (−594 vs −602 mA). So the
+identified model is good enough to drive a real model-based controller.
+
+**The dual-motor (shadow) finding — worth a Discussion paragraph.** The VX300s
+shoulder and elbow are dual-motor joints: a shadow motor mirrors the master via
+the Dynamixel Secondary-ID feature, with *opposite* `Drive_Mode` (they are mounted
+mirror-imaged). The stock Interbotix stack only ever runs the arm in *position*
+mode (gripper in PWM); pure **current/torque** control of shadowed joints is not a
+documented path, and our first attempts had the elbow dropping — which looked like
+the shadow not contributing torque ("half-torque hypothesis"). **This turned out
+to be false:** once the controller bugs were fixed, current control holds the
+dual-motor elbow perfectly at its model gravity. The real obstacles were all
+controller/integration issues, not a hardware limit:
+1. **Mode-switch transient.** Switching position→current torque-cycles the motors
+   (a brief limp window); the heavy, gravity-loaded elbow free-falls ~0.5 rad and
+   enters control at ~2.9 rad/s. Mitigated with a *ramped setpoint* (track from
+   the post-switch position back to q_d) so the controller never sees a large step
+   error. Residual: the dip itself remains; the clean fix is to engage from a
+   low-gravity configuration / via a trajectory.
+2. **Velocity-register quality.** The Kd damping term must use a *filtered
+   finite-difference* velocity, not the raw Dynamixel velocity register — the
+   register is noisy and underreports ~50–60% on distal joints (see the encoder
+   note), which left the loop underdamped and oscillating until fixed.
+3. **Safety of the loaded arm.** Never pass through zero commanded current on a
+   gravity-loaded arm (it collapses); park into position mode instead. An early
+   underdamped oscillation nearly tipped the (then-unsecured) base — the base must
+   be physically secured for current-mode work.
+
+**How to frame it.** The paper assumes an ideal torque interface; on real
+Dynamixel hardware with shadow motors, delivering model-based joint torques is an
+engineering problem in its own right (mode-switch transients, dual-motor command
+convention, sensor-grade velocity for damping). Documenting that gap — and that
+the identified model nonetheless yields a stable real controller — is a genuine
+contribution of the control chapter.
+
+**α (gravity-gain) sweep — RESULT (2026-06-18).** Steady-state droop vs α (and the
+settled current) gives a closed-loop, per-joint gravity-scale estimate (α*·G_model
+≈ true gravity), measured at the folded test pose [0,−0.6,0.5,0,0,0]:
+- **Elbow α* ≈ 1.09** — droop linear in α, zero-crossing at ~1.1; settled current
+  ≈ model (−691 vs −602 mA). The identified elbow gravity is correct (≈10%),
+  independently confirming the static experiment's elbow slope ~1.05.
+- **Shoulder α* ≈ 0.4** — two agreeing reads: droop crosses zero at α≈0.4 (and
+  *increases* with α, the signature of an over-predicting feedforward), and the
+  settled current is constant at −94±7 mA across α vs model −238 (ratio 0.39). So
+  the model over-predicts shoulder gravity ~2.5× here. Directionally consistent
+  with the static ≈0.58 finding (model > reality); the magnitude differs because
+  this pose lightly loads the shoulder and the closed-loop method removes the
+  stiction-band ambiguity. **A clean shoulder scale needs a shoulder-loaded pose.**
+- **wrist_angle** — droop is a constant ~−0.12 rad independent of α (gravity −48 mA
+  too small to drive it); the offset is friction, gravity scale indeterminate here.
+
+Framing: the α-sweep is a simple, hardware-only method to validate the identified
+gravity per joint in closed loop. It shows the model is accurate distally (elbow)
+but over-scaled at the shoulder — pinpointing where identification needs work
+(the shoulder mass-scale / first-moment, already flagged elsewhere).
+
+**Extrapolation / generalization test (2026-06-18).** With the shoulder software
+limit bumped 0.30→0.80, the controller engaged where the shoulder is unloaded
+(−1.0 rad) and ramped the setpoint into the UNTRAINED region (identification data
+stayed within shoulder≤0.30). It carried the shoulder to a settled **0.522 rad and
+held it for 65 s, jitter 0.0007 rad** — so the physically-structured model
+generalizes to unseen configurations well enough to control (the key advantage of
+model-based vs black-box identification; the gravity equation is exact mechanics,
+only the parameters were fit). The ramp itself (−1.0→0.52 under gravity comp) is a
+first point-to-point move, i.e. rudimentary trajectory tracking.
+Finding: the shoulder over-prediction is **pose-dependent** — true/model ≈ 0.4 at
+folded poses but ≈ 0.72 at the forward untrained pose (elbow likewise drifts from
+~1.0 to ~0.76). A *constant* per-joint scale does not capture it, which points to a
+mis-identified shoulder **first-moment / CoM geometry**, not just an amplitude
+error. Caveat: these single-point ratios include the stiction band (settled
+current is one point in the band), so they are indicative of pose-dependence, not
+exact; the α-sweep slopes remain the cleaner amplitude estimates.
+
+---
+
 ## Solver for the physically-feasible identification (Eq. 16)
 
 **The paper's tooling.** Momani & Hosseinzadeh use two *different* optimizers for
