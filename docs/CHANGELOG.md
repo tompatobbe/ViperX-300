@@ -9,6 +9,396 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-23 — Default command rate 50 Hz → ~6.7 Hz (stride 30): fix comms stalls
+
+**Area:** `collect_200hz.sh` default STRIDE
+
+### Problem / Motivation
+Streaming position commands at 50 Hz (stride 4) for a 0.5 Hz-bandwidth trajectory
+floods the WSL2/usbipd link and triggers ~100–280 ms comms stalls (schedule
+shifts → brief catch-up). A 60 s smoke at `--stride 30` ran with 0 stalls and
+passed verification, but the full-run command omitted the flag and re-stalled —
+the fix wasn't persisted.
+
+### Change
+Default `STRIDE 4 → 30` (~6.7 Hz commands, still 13× the trajectory bandwidth).
+The servo's time-based profile interpolates between the sparser waypoints; data is
+still recorded at 200 Hz (identification uses the measured motion, not the
+commands), so fidelity is unaffected. A comms gap shorter than one ~150 ms command
+interval no longer forces a schedule shift.
+
+### Evidence
+Smoke at stride 30: `400 commands in 59.9 s, 0 stalls absorbed`, Collection OK,
+verification PASS (198 Hz recording). Excitation trajectory itself is clamp-safe
+(shoulder stays in [−0.5,+0.3] during the run; sub-−1.3 only at the sleep pose).
+
+### Impact
+Collection now completes. Run `bash collect_200hz.sh --design <npz>` (stride 30
+default) for the full 900 s.
+
+---
+
+## 2026-06-23 — Reduce excitation speed: full-speed motion moved the (clamped) base
+
+**Area:** `run_trajectories.py` velocity/acceleration limits
+
+### Problem / Motivation
+At full speed the extended arm's reaction torque moved the clamped platform
+(observed on hardware). That risks tipping AND violates the **fixed-base
+assumption** the identification depends on — a moving base corrupts the torque
+data regardless of excitation quality. The waist (fast yaw of the extended arm)
+was the dominant driver (accel amplitude 8.6, highest of all joints).
+
+### Change
+Cut per-joint limits: `VEL_MAX 3.14→[1.8,2.2,2.2,2.5,2.5,2.5]`,
+`ACCEL_MAX 10→[3.5,5,5,6,6,6]` — waist hardest, shoulder/elbow retain meaningful
+acceleration for inertia/Coriolis excitation.
+
+### Evidence
+Re-optimised: waist accel 2.1 (was 8.6), shoulder/elbow ~4.3; feasible, band ✓,
+rest ✓, **corr 0.569 unchanged** (first-moment decorrelation is speed-independent).
+cond(Φ_b) rose ~150→~239 — the cost is weaker inertia excitation (lean on the
+`Ia·q̈` motor-inertia term at identification instead).
+
+### Impact
+Keeps the base fixed → valid data. Re-run the design; tune limits further if the
+base still moves (or back up if it's rock-solid).
+
+---
+
+## 2026-06-23 — Centre the q0 operating points (fix lopsided waist motion)
+
+**Area:** `run_trajectories.py`
+
+### Problem / Motivation
+The free q0 offsets parked dynamically-degenerate joints at extremes — above all
+the WAIST (whose angle does not affect the dynamics at all, base vertical-axis
+symmetry, so cond(Φ_b) is indifferent to it): q0_waist = −1.41, with the waist
+sweeping only the negative half. Lopsided, unintuitive motion the user flagged on
+hardware.
+
+### Change
+Constrain |q0 − joint_centre| ≤ Q0_MAX (0.30 rad) for every joint. The
+gravity-relevant offsets (shoulder ≈+0.2, elbow ≈−0.1) sit inside the band, so
+conditioning is essentially unchanged; the degenerate joints are pulled back to a
+symmetric, centred sweep.
+
+### Evidence
+Re-optimised: waist q0 +0.30 (was −1.41), shoulder −0.02, start velocity ✓ rest,
+band ✓, cond(Φ_b) ≈166–178 (within noise of the unconstrained value).
+
+### Impact
+Trajectory starts and sweeps about the joint centres. Re-run the design to save
+the centred version (the previous .npz still has the off-centre waist).
+
+---
+
+## 2026-06-23 — Rest-to-rest excitation (fix start lurch) — caught on hardware
+
+**Area:** `run_trajectories.py` · safety-critical
+
+### Problem / Motivation
+The first smoke run of the optimised design **lurched violently on engage** and
+the user aborted it. Cause: the Fourier trajectory's velocity at t=0 is Σ_k a_k,
+and only velocity *amplitude* was constrained — the saved design started at
+**2.5–2.8 rad/s** (waist/shoulder/wrist_rotate) from a standstill.
+
+### Change
+Added **rest-to-rest boundary constraints** to the optimiser: Σ_k a_k = 0 (zero
+boundary velocity) and Σ_k k·b_k = 0 (zero boundary acceleration) per joint —
+because the motion is periodic these hold at start, end, and every period. The
+feasible-start init is projected onto them; the feasibility verdict includes them.
+A `print_stats` readout and a hard `main()` **safety gate** abort any design with
+|q̇(0)| > 0.05 rad/s (also blocks stale pre-fix designs).
+
+### Evidence
+Re-optimised design: q̇(0) max |0.000| rad/s ✓, feasible, band ✓, cond(Φ_b) ≈176
+(slightly up from 140 — the equality constraints cost some freedom).
+
+### Impact
+Excitation now eases out of and back into standstill. The previously-saved design
+is invalidated (lurches) — re-run before collecting.
+
+---
+
+## 2026-06-23 — Excitation optimiser: reliable feasibility (feasible start + buffer)
+
+**Area:** `run_trajectories.py` optimiser robustness
+
+### Problem / Motivation
+With the tighter shoulder floor (−1.25) the cond(Φ_b) optimiser stopped finding a
+strictly-feasible design — restarts started from infeasible random points, one
+diverged (cond 8×10⁵), and the saved design violated limits by 0.5 rad (would trip
+the hardware box gate).
+
+### Change
+(1) Each restart now starts from `scale_to_limits` (amplitudes feasible for all
+pos/vel/accel) with q0=HOME — SLSQP begins feasible and only maintains it.
+(2) Inward limit buffer (0.04 rad, 0.10 rad/s) so the full-rate trajectory's
+between-grid peaks stay within true limits. (3) Feasibility verdict evaluated
+against the TRUE limits + band (the optimiser constraints are buffered), matching
+the hardware gates.
+
+### Evidence
+Now returns `feasible=True` with all joints ✓ and band ✓ inside true limits;
+cond(Φ_b) ≈120–150 (improves with iterations), shoulder·elbow corr ≈0.57 (the
+clamp-floored workspace ceiling, still richer/better-conditioned than old seed-42
+data at 236).
+
+### Impact
+Design step is now dependable. Re-run → smoke → collect.
+
+---
+
+## 2026-06-23 — Shoulder floor −1.25 (anti-tip clamp collision) + stale-design gate
+
+**Area:** `run_trajectories.py` · new hardware collision constraint
+
+### Problem / Motivation
+Below shoulder ≈ −1.3 the shoulder link collides with the anti-tip clamp securing
+the base (observed on hardware). The float sweep and the first optimised design
+reached shoulder −1.78 — unsafe.
+
+### Change
+Raised `LIMITS_LO[shoulder]` −1.78 → **−1.25** (0.05 rad below the −1.3 collision
+point for execution-overshoot margin). Added a **box-limit safety gate** in
+`main()`: a design whose raw trajectory exceeds the current box limits (e.g. a
+design saved before this floor) aborts instead of being silently clipped into a
+distorted path.
+
+### Evidence
+The prior `outputs/excitation_design.npz` (shoulder −1.782) now trips the gate
+(box violation +0.532 rad → ABORT). Compiles.
+
+### Impact
+The first optimised design is **invalidated** — must re-run
+`run_trajectories.py --design-only --save outputs/excitation_design.npz`. The
+tighter shoulder range may raise the achievable shoulder·elbow corr (less
+decorrelation room); judge on the re-run.
+
+---
+
+## 2026-06-23 — collect_200hz.sh --design: replay a vetted excitation deterministically
+
+**Area:** `collect_200hz.sh` + `run_trajectories.py` (`--save`/`--load`)
+
+### Problem / Motivation
+The cond(Φ_b) optimiser is now multi-minute and multistart-random, so re-running
+it live inside the gated collection would be slow and non-reproducible (the
+collected trajectory wouldn't match the one vetted offline).
+
+### Change
+`run_trajectories.py` gained `--save`/`--load` (.npz of a,b,q0). `collect_200hz.sh`
+gained `--design PATH`, which passes `--load` to the trajectory script (skipping
+the optimiser) so collection replays the exact approved design; the legacy
+`--seed` path is unchanged when `--design` is omitted. The band safety gate and
+all collection gates still run.
+
+### Evidence
+`bash -n` clean; `--load outputs/excitation_design.npz` reproduces the saved
+design (cond(Φ_b) 83.6, shoulder·elbow corr 0.362, band ✓).
+
+### Impact
+Design-once-offline → collect-deterministically. Workflow: vet with
+`run_trajectories.py --design-only --save`, then
+`collect_200hz.sh --design <npz>`.
+
+---
+
+## 2026-06-23 — Coupled shoulder–elbow collision band → excitation constraint
+
+**Area:** `run_trajectories.py` · turns the measured reachable envelope into the
+optimiser constraint · `control/pd_grav_control.py --float` produced the data
+
+### Problem / Motivation
+Opening the shoulder range for the new excitation needs the real collision-safe
+shoulder/elbow set, not an independent box (the box's shoulder-up + elbow-extended
+corner collides). Mapped it by hand in float mode.
+
+### Change
+From the float sweep (`data/float_envelope_20260623_113036.csv`, full-area sweep,
+confirmed by the user) the safe set is a **diagonal band** elbow ≈ −0.7·shoulder
++ offset: fitted `elbow_max=−0.71·sh+0.30`, `elbow_min=−0.67·sh−0.26`, ~0.56 rad
+elbow freedom at fixed shoulder. Encoded as `SH_EL_BAND_HI/LO` (+0.08 rad inward
+margin), enforced on the sampled trajectory in the optimiser, reported in
+`print_stats`, and a hard **safety gate** aborts collection if a design breaches
+it (the per-joint clip can't enforce a coupled constraint). Shoulder/elbow box
+limits opened to the swept extremes (shoulder [−1.78,1.38], elbow [−1.36,1.58]).
+
+### Evidence
+A partial design run (2 restarts, 110 iters) inside the band: cond(Φ_b) 236→**89**,
+shoulder·elbow m·c_y corr **+0.62→+0.42**, band ✓ (slack +0.08). Not yet strictly
+feasible (minor limit overshoots — needs more iterations).
+
+### Impact
+Trajectory redesign demonstrably reduces the first-moment collinearity within the
+real safe set. **Open question:** the band is itself a near-linear shoulder–elbow
+coupling (≈0.56 rad independent freedom), so corr may plateau ~0.4 — a
+**workspace-geometry ceiling** on first-moment separability. If the converged
+design and re-identified model still lump, the next lever is a known payload to
+break the mass symmetry (not trajectory design). Next: full converged design run
+→ collect → re-identify.
+
+---
+
+## 2026-06-23 — Float/compliant mode in pd_grav_control (reachable-envelope mapping)
+
+**Area:** `control/pd_grav_control.py` · `--float` + `--go-home` · supports the
+shoulder/elbow coupled-limit design for the new excitation
+
+### Problem / Motivation
+Designing the new excitation needs the *real* collision-safe shoulder/elbow
+reachable set (the lumping fix requires opening the shoulder-forward range, but
+only within a coupled envelope, e.g. elbow→1.0 only when shoulder≈−1.0). Best
+measured empirically by hand-moving the arm.
+
+### Change
+Added `--float`: pure gravity-compensation, **no position term** — the arm holds
+its own weight but is freely backdrivable by hand. Disables the position/
+tracking-error kill (the operator moves it far on purpose); soft limits + current
+caps + a raised velocity backstop remain. `--go-home q…` moves the arm to a start
+pose in position mode (timed profile, raw interface) before engaging. On stop it
+writes a **CSV of recorded joint angles** (`data/float_envelope_*.csv`) and prints
+the shoulder/elbow ranges swept. Reuses the tested current-mode handoff/parking.
+
+### Evidence
+Byte-compiles; reuses the validated gravity + safety path (only the position term
+and the position kill are gated off in float). Hardware run pending (user).
+
+### Impact
+Enables recording the real reachable envelope to fit the coupled shoulder/elbow
+limit, which then becomes a constraint in the cond(Φ_b) excitation optimiser.
+
+---
+
+## 2026-06-23 — Implement the cond(Φ_b) excitation objective (+ free q0, multistart)
+
+**Area:** `run_trajectories.py` · fixes the wrong-objective defect from the audit
+entry below
+
+### Change
+Replaced the excitation optimiser's objective `cond([q̇; q̈])` (kinematic) with
+**`cond(Φ_b)`** — the condition number of the actual base identification
+regressor (paper Eq. 11), built via `sf.regressor_fast` + `find_base_parameters`
+over one fundamental period. Made the per-joint offsets **q0 free design
+variables** (paper does this; gravity conditioning depends on the operating
+point). Added **multistart** (`--restarts`, q0 jittered per restart), `--maxiter`,
+`--design-only` (optimise + report without ROS/hardware), and a startup readout
+of achieved `cond(Φ_b)` and the shoulder·elbow `m·c_y` correlation. The hardware
+import is now lazy so the design runs ROS-free; the initial move targets the
+trajectory start (= q0), not HOME.
+
+### Evidence
+A short (24-sample grid, 18-iter, single-restart) check drops `cond(Φ_b)` 807 → 116.
+**Caveat:** the shoulder·elbow `m·c_y` correlation barely moved (+0.640 → +0.631)
+on that partial/infeasible run — global conditioning ≠ targeted first-moment
+decorrelation. A full feasible run (higher `--maxiter`/`--restarts`) is needed to
+judge; if the correlation does not drop, add an explicit shoulder/elbow column-
+correlation penalty on top of the paper's criterion.
+
+### Performance / who-runs
+One objective eval ≈ 0.25 s (Python-loop regressor over 80 samples); SLSQP
+finite-diff gradient makes it ~17 s/iteration → the full optimise is multi-minute.
+**User runs it** (`python3 run_trajectories.py --design-only` first to vet the
+design, then without `--design-only` to collect). Defaults: grid 80 samples,
+6 restarts, maxiter 200.
+
+### Impact
+Excitation design now targets the regressor conditioning that governs first-moment
+identifiability. Next: a full design run, judge `cond(Φ_b)` + shoulder/elbow corr,
+then (if needed) add the targeted penalty, then recollect + re-identify.
+
+---
+
+## 2026-06-23 — Excitation-trajectory audit: optimiser conditioned the wrong matrix
+
+**Area:** `run_trajectories.py` (excitation design) · root-cause audit vs the
+paper before re-identification · analysis only (fix follows)
+
+### Problem / Motivation
+The hardware first-moment lumping (entry above) showed the shoulder/elbow gravity
+split is unidentifiable from our data. We audited the excitation generator against
+the paper (§3.2, Eq. 7 / Eq. 11) to find why.
+
+### Finding
+The kinematic form is faithful to the paper (Fourier, Δf=0.1 Hz, N_f=5,
+900 s @ 200 Hz, SLSQP ≈ fmincon). But the **conditioning objective is wrong**:
+the paper minimises `cond(Φ_b)` — the condition number of the actual **base
+identification regressor** (Eq. 11, which contains the gravity/angle columns) —
+whereas `run_trajectories.py` minimises `cond([q̇; q̈])`, a purely **kinematic**
+velocity/acceleration matrix. First-moment (gravity) conditioning was therefore
+never optimised, leaving the shoulder/elbow first moments collinear → lumping.
+
+### Evidence (measured on the recorded data)
+cond(Φ_b) = 236 (200 Hz run) / 2 765 (May run); shoulder·elbow `m·c_y` column
+correlation +0.62 (200 Hz) — the collinearity behind the lumping. Secondary
+deviations: q0 fixed at HOME (paper frees it); SLSQP does not converge (degenerate
+cond→1.0 on re-run); shoulder forward range capped at +0.17 rad (paper ±1.76);
+accel limit 10 vs ~200–500 rad/s². Full table in THESIS_NOTES (2026-06-23
+excitation-trajectory audit).
+
+### Impact
+Reframes re-identification: the model wasn't wrong for lack of a solver — it was
+identified from data that never made the first moments separable. Fix (next):
+swap the objective to cond(Φ_b), free q0, open the shoulder range, multistart the
+optimiser. Re-run: regenerate the excitation, recollect, re-identify.
+
+---
+
+## 2026-06-23 — Held-out cross-validation (post-DH-fix) + a first-moment lumping diagnosis
+
+**Area:** identification validation · `compare_urdf_performance.py` (held-out) +
+`control/pd_grav_control.py` (hardware gravity-source swap) · no code change
+
+### Problem / Motivation
+The control phase stalled on a ~46 mm EE error dominated by shoulder gravity
+over-prediction. Before re-collecting data we tested whether the *existing* v1-5
+(post-DH-fix, `cfg-9ef2c992`) models already generalise, and which is the better
+gravity source for the controller. CLAUDE.md gates the control phase on a
+*validated* URDF, defined by low **held-out** torque-prediction error — which we
+had not yet measured for the post-fix models.
+
+### Experiment & result
+**(1) Held-out torque cross-validation** (`--friction --drop-glitches`), each
+model predicting the dataset it was NOT identified from. Friction-fitted mean
+RMSE: 200 Hz→May 1.222 Nm, May→200 Hz **0.303 Nm**; both crush factory
+(2.066 / 0.719 Nm) — the DH fix is re-confirmed fully held-out. But the **shoulder
+is asymmetric**: May→200 Hz shoulder R² **+0.81** (RMSE 0.76 vs no-model 1.69),
+while 200 Hz→May shoulder R² **−1.9** (worse than commanding zero — it
+over-predicts out-of-sample). So the 200 Hz shoulder defect is **real and
+held-out**, not a held-in artifact (likely high-speed rotor inertia `Ia·q̈`
+absorbed into the shoulder first moment).
+
+**(2) Hardware gravity-source swap** — ran the controller on the May URDF
+gravity. The two models AGREE on shoulder gravity (−241 vs −239 mA) but disagree
+massively on **elbow** (May −94 vs 200 Hz −602 mA; measured holding −683). On
+hardware the May model droops the elbow **−0.349 rad** (under-compensates 7×)
+while the shoulder droop is unchanged. The swap made things worse.
+
+### Interpretation
+Classic **first-moment null-space lumping**: the shoulder and elbow first-moment
+regressor columns are nearly collinear for these (shared-excitation) trajectories,
+so the optimiser can shuffle gravity between the two joints without hurting the
+*total* chain-torque fit. Held-out cross-val doesn't catch it because both
+datasets share the excitation structure. The 200 Hz model happens to split it
+physically (elbow −602 ≈ measured), the May model doesn't.
+
+### Impact / decisions
+- **Controller stays on the 200 Hz model** (best per-joint gravity split: elbow
+  correct, shoulder slightly over). The May swap is reverted.
+- **Re-identification is now justified with a specific target:** design excitation
+  that **decorrelates shoulder vs elbow gravity** (move one while the other is held
+  at varied fixed angles, slowly) to break the collinearity. Generic
+  "re-identify the shoulder" was the wrong framing.
+- No re-run needed yet; next is excitation-trajectory design.
+
+### Open questions / assumptions
+- Friction is refit on the eval data (gravity/inertia are the held-out part).
+- The ~1.7× constant static over-prediction (stiction, CHANGELOG 2026-06-13) is a
+  separate physical effect, not addressed by re-identification.
+
+---
+
 ## 2026-06-23 — Integral term (PID + gravity comp) to kill the steady-state droop
 
 **Area:** `control/pd_grav_control.py` · roadmap stage 2 (accuracy) · opt-in

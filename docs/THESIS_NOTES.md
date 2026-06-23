@@ -482,6 +482,162 @@ constrained `Ia_i ≥ 0`, so the SDP structure is unchanged — then re-run the
 identification + cross-validation matrix on the 200 Hz data. Success criterion
 unchanged: beat 0.438 held-in *and* 0.645 held-out, with a sane waist axis.
 
+### Post-DH-fix held-out cross-val + first-moment null-space lumping (2026-06-23)
+
+Re-ran the cross-validation on the **post-DH-fix v1-5 models** (`cfg-9ef2c992`,
+both runs, the recipe of record) to gate the control phase on held-out evidence,
+and followed it with a hardware test that exposed a structural identifiability
+limit the torque-RMSE numbers alone hide.
+
+**Held-out torque (friction-fitted mean RMSE, Nm):** 200 Hz→May **1.222**,
+May→200 Hz **0.303**; factory 2.066 / 0.719. Both identified models beat factory
+held-out — the modified-DH (Craig) kinematics fix is re-confirmed out-of-sample.
+But the **shoulder is asymmetric**: May→200 Hz shoulder R² **+0.81** (RMSE 0.76 vs
+no-model 1.69), whereas 200 Hz→May shoulder R² **−1.9** — the 200 Hz model
+predicts the shoulder *worse than commanding zero* on unseen data. So the 200 Hz
+shoulder over-prediction (the source of the controller's ~46 mm EE droop) is a
+**genuine, held-out defect**, not a held-in artifact — consistent with high-speed
+reflected inertia `Ia·q̈` being absorbed into the shoulder first moment during the
+200 Hz fit.
+
+**The decisive hardware test.** Swapping the controller's gravity source to the
+*May* URDF (better held-out shoulder) did **not** help — it made things worse.
+The two models agree on shoulder gravity (−241 vs −239 mA at the test pose) but
+disagree massively on the **elbow** (May −94 vs 200 Hz −602 mA; measured holding
+current −683). On hardware the May model droops the elbow **−0.349 rad**
+(under-compensating elbow gravity ~7×) with the shoulder droop unchanged.
+
+**Interpretation — first-moment null-space lumping.** Both models predict the
+*total* chain torque well held-out, but **distribute** gravity between the
+shoulder and elbow differently. The shoulder- and elbow-first-moment regressor
+columns are nearly **collinear** for these trajectories (the elbow swings through
+a similar gravitational arc whenever the shoulder does, given the seed-42
+excitation), so the feasible-LS optimiser can trade `m·c` between the two joints
+along a near-null direction without changing the total-torque cost. The 200 Hz
+fit lands on a physically correct elbow split (−602 ≈ measured), the May fit does
+not. **Held-out cross-validation cannot detect this**, because both datasets
+share the same excitation structure and therefore the same collinearity — the
+test is necessary but, for *per-joint* first-moment correctness, not sufficient.
+
+**Why this matters for the dissertation.** It is a concrete, hardware-confirmed
+instance of *structural unidentifiability under insufficiently exciting
+trajectories* — distinct from the inertia/`Ia·q̈` story above (that is about
+acceleration-correlated torque a rigid-body model can't represent; this is about
+gravity terms that *are* representable but not *separable* given the data). It
+also reframes model selection: aggregate held-out RMSE ranked the two models
+similarly, yet they are not interchangeable for control, because control needs the
+gravity **split** right, not just the sum.
+
+**Decisions.** (i) The controller stays on the 200 Hz model (best per-joint
+gravity split); the integral term / per-joint α handles its residual shoulder
+over-prediction. (ii) The principled fix is **not** "re-identify the shoulder"
+but **excitation redesign that decorrelates shoulder and elbow gravity** — e.g.
+trajectory segments that move the shoulder through its range while the elbow is
+clamped at several distinct fixed angles, and vice-versa, at low speed so gravity
+dominates inertia/Coriolis. That makes the two first-moment columns linearly
+independent, so the optimiser can no longer lump. This is the next
+data-collection experiment (design pending).
+
+## Excitation-trajectory audit vs the paper, and the wrong-objective root cause (2026-06-23)
+
+Before re-designing the excitation we audited `run_trajectories.py` against the
+paper (§3.2, Eq. 7 / Eq. 11). The **kinematic form is faithful**: finite Fourier
+series, Δf = 0.1 Hz, N_f = 5, 900 s @ 200 Hz, SLSQP standing in for the paper's
+`fmincon` active-set. The defect is in *what is optimised*.
+
+**The wrong objective.** The paper minimises **cond(Φ_b)** — the condition number
+of the actual **base identification regressor** (Eq. 11), which contains the
+gravity columns (functions of joint *angle*). Our optimiser instead minimised
+`cond([q̇; q̈])` — a purely **kinematic** velocity/acceleration matrix. Gravity /
+first-moment conditioning was therefore **never in the objective**, so the
+separability of the shoulder and elbow first moments was left to chance. This is
+the upstream cause of the null-space lumping diagnosed on hardware (the previous
+section): we never optimised the quantity whose ill-conditioning *is* the lumping.
+
+**Measured on the real recorded data** (regressor built with `regressor_fast`,
+base via `find_base_parameters`):
+
+| | 200 Hz run | May run |
+|---|---|---|
+| cond(Φ_b) (paper's Eq. 11 objective) | 236 | 2 765 |
+| shoulder·elbow `m·c_y` column corr | **+0.62** | +0.36 |
+| elbow·wrist_angle `m·c_y` corr | +0.63 | +0.52 |
+
+The +0.62 shoulder/elbow first-moment column correlation is the collinearity that
+lets the optimiser trade gravity between the two joints; the May run's 10×-worse
+cond(Φ_b) = 2 765 explains why *its* identification got the elbow split badly
+wrong on hardware (−94 vs the 200 Hz model's physically-correct −602 mA).
+
+**Secondary deviations, all of which suppress gravity excitation:**
+1. **q0_i fixed at HOME, not optimised.** The paper treats each joint offset as a
+   free design variable; the operating point sets how much gravity each pose
+   excites, so fixing it discards a key DOF for first-moment conditioning.
+2. **The SLSQP optimisation does not converge** (`Positive directional derivative
+   for linesearch`, degenerate cond → 1.0 on re-run): even the (wrong) kinematic
+   objective is not actually achieved — the coefficients are effectively
+   unoptimised. Needs a better init / multistart.
+3. **Shoulder forward range capped.** Recorded shoulder reaches only +0.17 rad
+   (commanded LIMITS_HI = 0.30) vs the paper's ±0.56π ≈ ±1.76. The gravity-heavy
+   forward-extended poses — where shoulder vs elbow moment arms differ most and
+   would *break* the collinearity — are never visited.
+4. **Accel limit 10 rad/s²** vs the paper's ~200–500: fine for gravity, weak for
+   inertia identification.
+
+**Fix (decided), in priority order:** (i) replace the optimiser objective with
+**cond(Φ_b)** of the base regressor — directly penalises the shoulder/elbow
+collinearity; (ii) free the q0_i offsets; (iii) open the shoulder forward range;
+(iv) fix SLSQP convergence (multistart). This reframes the re-identification
+deliverable: the model was never wrong for lack of a good *solver* — it was
+identified from data that never made the first moments separable, because the
+trajectory designer optimised the wrong condition number.
+
+## Excitation redesign outcome + the workspace-geometry decorrelation ceiling (2026-06-23)
+
+The redesigned optimiser (`run_trajectories.py`, minimising `cond(Φ_b)` of the
+base regressor, with free q0, multistart, batched regressor verified to 1e-12 vs
+`regressor_fast`) was run against the **real, collision-safe workspace**, and the
+result is a clean, examiner-grade conclusion about the *limits* of excitation
+design on this hardware.
+
+**The collision-safe workspace is the binding constraint.** Two hardware facts,
+both mapped empirically (gravity-comp float mode, `pd_grav_control --float`,
+`data/float_envelope_20260623_113036.csv`):
+1. The shoulder and elbow reachable set is a **diagonal band** (elbow ≈
+   −0.7·shoulder + offset; ≈0.56 rad of independent elbow freedom at fixed
+   shoulder) — itself a near-linear shoulder–elbow coupling.
+2. The anti-tip **clamp blocks shoulder < −1.3** (the shoulder link collides) —
+   removing exactly the deep-forward poses that most decorrelate the two first
+   moments.
+
+**The quantitative ceiling.** With the deep-forward shoulder available (sweep
+reached −1.78) the optimiser pulled the shoulder·elbow m·c_y correlation 0.62 →
+**0.36**. With the clamp floor at −1.25 it can only reach **~0.57** (cond(Φ_b)
+≈150–240). So:
+> Within the collision-safe workspace, excitation redesign alone *cannot* fully
+> separate the shoulder and elbow first moments. The residual ~0.57 collinearity
+> is a **workspace-geometry limit**, not a solver or trajectory-richness failure.
+
+This is the key methodological result of the re-identification phase: optimal
+excitation design is necessary (it fixed the *objective* and roughly halved the
+collinearity when the workspace allowed) but **not sufficient** when the safe
+workspace is itself geometrically degenerate. The principled remaining lever is a
+**known payload** (a calibrated mass at a known distal location), which adds
+independent equations breaking the first-moment degeneracy without needing the
+unsafe poses — deferred pending whether the re-identified model's elbow gravity
+split is good enough in practice.
+
+**Secondary excitation lessons banked (all in CHANGELOG 2026-06-23):** the Fourier
+form needs **rest-to-rest** boundary constraints (Σa=0, Σk·b=0) or it commands a
+large initial velocity from standstill (the arm lurched to ~2.8 rad/s on the first
+hardware run); **q0 must be bounded near the joint centre** or dynamically-
+degenerate joints (above all the waist, whose angle does not affect the dynamics
+at all) park at arbitrary extremes; full-speed motion of the extended arm dumps
+enough **base-reaction torque** to move even a clamped platform, which violates
+the fixed-base assumption, so speed had to be cut (waist hardest); and the
+**command rate** (50 Hz) was ~100× the trajectory bandwidth (0.5 Hz), flooding the
+WSL2/USB link and causing comms stalls — reduced to ~6.7 Hz (servo interpolates;
+data still recorded at 200 Hz, and identification uses the *measured* motion).
+
 ## Reflected motor inertia: model extension and validation protocol (2026-06-13)
 
 **The model.** With high gear ratios (≈270:1 on the ViperX-300) the

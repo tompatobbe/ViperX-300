@@ -1,0 +1,36 @@
+[run] Loading design coefficients from outputs/excitation_design.npz …
+[run] Trajectory statistics:
+      f_l=0.1 Hz  ω_l=0.6283 rad/s  N_f=5
+      Freq range: 0.628 – 3.142 rad/s
+      Joint               q0        pos range           limit       Vel/lim       Acc/lim
+      waist            +0.79 [ -0.01, +1.98] [-2.80,+2.80]✓    3.04/3.1    8.29/10.0
+      shoulder         +0.46 [ -1.21, +1.34] [-1.25,+1.38]✓    3.04/3.1    5.90/10.0
+      elbow            -0.12 [ -0.85, +1.07] [-1.36,+1.58]✓    2.19/3.1    4.40/10.0
+      forearm_roll     -1.14 [ -1.46, -0.19] [-1.50,+1.50]✓    2.00/3.1    4.77/10.0
+      wrist_angle      +1.42 [ -1.41, +1.48] [-1.50,+1.50]✓    3.05/3.1    5.72/10.0
+      wrist_rotate     -1.00 [ -2.24, +2.20] [-2.80,+2.80]✓    3.12/3.1    4.84/10.0
+      shoulder–elbow band: min slack +0.080 rad ✓ inside
+[run] Pre-computing 12000 waypoints (60 s @ 200 Hz) …
+[run] achieved cond(Φ_b)≈139.8  shoulder·elbow m·c_y corr=+0.575  (lower |corr| ⇒ separable)
+[run] Connecting to "vx300s" …
+[INFO] [1782212885.676948483] [interbotix_robot_manipulation]: Initialized InterbotixRobotNode!
+[INFO] [1782212885.729693523] [interbotix_robot_manipulation]: 
+	Robot Name: vx300s
+	Robot Model: vx300s
+[INFO] [1782212885.730087538] [interbotix_robot_manipulation]: Initialized InterbotixRobotXSCore!
+[INFO] [1782212885.749687388] [interbotix_robot_manipulation]: 
+	Arm Group Name: arm
+	Moving Time: 2.00 seconds
+	Acceleration Time: 0.30 seconds
+	Drive Mode: Time-Based-Profile
+[INFO] [1782212885.750183003] [interbotix_robot_manipulation]: Initialized InterbotixArmXSInterface!
+[INFO] [1782212886.258881795] [interbotix_robot_manipulation]: 
+	Gripper Name: gripper
+	Gripper Pressure: 50.0%
+[INFO] [1782212886.259376989] [interbotix_robot_manipulation]: Initialized InterbotixGripperXSInterface!
+[run] Moving to trajectory start [0.793, 0.464, -0.121, -1.143, 1.42, -1.0] …
+[run] Closing gripper …
+[run] Waiting 1 s — ensure recorder is running …
+[run] Effective command rate: 50.0 Hz  moving_time=0.080s  accel_time=0.020s
+[run] Executing excitation trajectory — Ctrl+C to stop early …
+[run] WARNING: 142 ms stall — schedule shifted (total stalls: 1)

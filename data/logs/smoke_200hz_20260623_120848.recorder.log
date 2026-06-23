@@ -1,0 +1,8 @@
+[INFO] [1782209335.296387347] [joint_state_recorder_200hz]: Recorder ready  →  data/smoke_200hz_20260623_120848.csv  (duration=420 s, no throttle — every message recorded)
+[INFO] [1782209335.297458084] [joint_state_recorder_200hz]: First joint-state message received — recording started (time base: header stamp).
+RECORDING_STARTED
+[INFO] [1782209376.414153227] [joint_state_recorder_200hz]: Signal 2 received — stopping.
+
+[recorder] Saved 8123 rows.
+[recorder] Span 41.1 s  →  effective rate 197.5 Hz
+[recorder] Dropout-sentinel rows (all arm joints ≈ −π): 5

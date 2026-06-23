@@ -15,8 +15,11 @@
 # Options:
 #   --smoke           60 s rehearsal (output data/smoke_200hz_<stamp>.csv)
 #   --duration S      trajectory duration, integer seconds (default 900; smoke 60)
-#   --seed N          excitation coefficient seed (default 42 = delivered run)
-#   --stride N        send every N-th waypoint (default 4 → 50 Hz commands)
+#   --design PATH     replay a vetted, optimised design .npz (run_trajectories
+#                     --load); deterministic, skips the optimiser. Recommended.
+#   --seed N          excitation coefficient seed (default 42; ignored with --design)
+#   --stride N        send every N-th waypoint (default 30 → ~6.7 Hz commands;
+#                     matches the 0.5 Hz trajectory bandwidth, robust to comms stalls)
 #   --min-rate HZ     topic-rate gate threshold (default 150)
 #   --output PATH     CSV path (default data/traj_run_200hz_<stamp>.csv)
 #   --robot-model M   robot model (default vx300s)
@@ -27,17 +30,23 @@ cd "$(dirname "$0")"
 
 DURATION=""
 SEED=42
-STRIDE=4
+# Command rate = 200/STRIDE Hz. stride 30 ⇒ ~6.7 Hz, which matches the trajectory's
+# real bandwidth (0.5 Hz, 13× oversampled) and stays robust to WSL2/usbipd comms
+# stalls (a stall shorter than one ~150 ms command interval no longer forces a
+# schedule shift). stride 4 (50 Hz) floods the link and re-triggers the stalls.
+STRIDE=30
 MIN_RATE=150
 OUTPUT=""
 ROBOT_MODEL="vx300s"
 SMOKE=0
 SKIP_LATENCY=0
+DESIGN=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --smoke)        SMOKE=1;           shift   ;;
         --duration)     DURATION="$2";     shift 2 ;;
+        --design)       DESIGN="$2";       shift 2 ;;
         --seed)         SEED="$2";         shift 2 ;;
         --stride)       STRIDE="$2";       shift 2 ;;
         --min-rate)     MIN_RATE="$2";     shift 2 ;;
@@ -47,6 +56,10 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+if [[ -n "$DESIGN" && ! -f "$DESIGN" ]]; then
+    echo "--design file not found: $DESIGN"; exit 1
+fi
 
 if [[ -z "$DURATION" ]]; then
     [[ "$SMOKE" = 1 ]] && DURATION=60 || DURATION=900
@@ -156,11 +169,20 @@ grep -q RECORDING_STARTED "$REC_LOG" \
     || die "recorder saw no message within 30 s — see $REC_LOG"
 echo "Recorder running (PID $REC_PID, log $REC_LOG); it will be stopped when the trajectory ends."
 
-# ── [5/6] Excitation trajectory (existing, proven script — unmodified) ───────
-step 5/6 "Excitation trajectory (${DURATION}s, seed $SEED, stride $STRIDE)"
+# ── [5/6] Excitation trajectory (existing, proven script) ────────────────────
+# With --design: replay the vetted, optimised coefficients (--load), so the
+# collected trajectory is exactly the one approved offline (no live re-optimise,
+# deterministic). Without it: the legacy seed-based path.
+if [[ -n "$DESIGN" ]]; then
+    step 5/6 "Excitation trajectory (${DURATION}s, design $DESIGN, stride $STRIDE)"
+    TRAJ_ARGS=(--load "$DESIGN")
+else
+    step 5/6 "Excitation trajectory (${DURATION}s, seed $SEED, stride $STRIDE)"
+    TRAJ_ARGS=(--seed "$SEED")
+fi
 python3 -u run_trajectories.py \
     --duration "$DURATION" --rate 200 --robot-model "$ROBOT_MODEL" \
-    --seed "$SEED" --stride "$STRIDE" 2>&1 | tee "$TRAJ_LOG" \
+    "${TRAJ_ARGS[@]}" --stride "$STRIDE" 2>&1 | tee "$TRAJ_LOG" \
     || die "trajectory script failed — see $TRAJ_LOG (recorder stopped; partial CSV at $OUTPUT)"
 
 echo "Trajectory done — stopping recorder …"

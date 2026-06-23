@@ -1,0 +1,3 @@
+[INFO] [1782219219.715728236] [joint_state_recorder_200hz]: Recorder ready  →  data/traj_run_200hz_20260623_145333.csv  (duration=1260 s, no throttle — every message recorded)
+[INFO] [1782219219.716821425] [joint_state_recorder_200hz]: First joint-state message received — recording started (time base: header stamp).
+RECORDING_STARTED

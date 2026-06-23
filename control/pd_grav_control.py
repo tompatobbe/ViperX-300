@@ -227,6 +227,25 @@ class PDGravNode(Node):
         rclpy.spin_until_future_complete(self, fut)
         self.get_logger().info(f'arm → {mode} mode')
 
+    def _goto_position(self, q_home, secs=3.0):
+        """Gentle move to q_home in POSITION mode (time profile) via the raw
+        interface, so --float can home itself before engaging current mode."""
+        cli = self.create_client(OperatingModes, f'/{self.robot}/set_operating_modes')
+        while not cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('waiting for set_operating_modes …')
+        req = OperatingModes.Request()
+        req.cmd_type, req.name, req.mode = 'group', 'arm', 'position'
+        req.profile_type = 'time'
+        req.profile_velocity = int(secs * 1000)      # ms to reach goal
+        req.profile_acceleration = int(0.3 * secs * 1000)
+        fut = cli.call_async(req); rclpy.spin_until_future_complete(self, fut)
+        # Let the position command publish and the servo execute the timed move.
+        t0 = time.time()
+        while time.time() - t0 < secs + 1.5:
+            self.publish(q_home)
+            rclpy.spin_once(self, timeout_sec=0.05)
+        self.get_logger().info(f'homed to {np.round(q_home, 3).tolist()}')
+
     def publish(self, u):
         msg = JointGroupCommand()
         msg.name = 'arm'
@@ -273,35 +292,52 @@ class PDGravNode(Node):
                 self.t_prev, self.q_prev = now, q.copy()
                 qd = self.v_filt
 
-        # RAMPED SETPOINT: the mode switch leaves the (heavy, gravity-loaded)
-        # joints displaced — yanking them back to q_d from a large error makes the
-        # PD respond violently (overshoot → oscillation → coupling into other
-        # joints). Instead, capture where the arm actually is at engage and ramp
-        # the reference q_d_ramp from there to q_d over --recover-time, so the
-        # tracking error stays small and the recovery is gentle.
-        if self.q_ref_start is None:
-            self.q_ref_start = q.copy()
-        frac = min(1.0, elapsed / max(self.args.recover_time, 1e-3))
-        q_ref = self.q_ref_start + frac * (self.q_d - self.q_ref_start)
-        err = q_ref - q
+        frac = 1.0
+        if self.args.float:
+            # FLOAT mode: pure gravity compensation, NO position term — the arm
+            # holds its own weight and is freely backdrivable by hand (for mapping
+            # the reachable envelope). No setpoint ⇒ no position/tracking-error
+            # kill (the operator moves it far on purpose); soft limits + current
+            # caps remain the safety net. Velocity kill kept at a high backstop.
+            q_ref = q
+            err = self._z
+            if elapsed > self.args.grace and np.any(np.abs(qd) > max(self.args.vel_limit, 6.0)):
+                self._vel_trip += 1
+                if self._vel_trip >= 3:
+                    self.estop(f'|q̇|>{max(self.args.vel_limit, 6.0)} ({np.round(qd,2)})')
+                    return
+            else:
+                self._vel_trip = 0
+        else:
+            # RAMPED SETPOINT: the mode switch leaves the (heavy, gravity-loaded)
+            # joints displaced — yanking them back to q_d from a large error makes
+            # the PD respond violently (overshoot → oscillation → coupling into
+            # other joints). Instead, capture where the arm actually is at engage
+            # and ramp the reference from there to q_d over --recover-time, so the
+            # tracking error stays small and the recovery is gentle.
+            if self.q_ref_start is None:
+                self.q_ref_start = q.copy()
+            frac = min(1.0, elapsed / max(self.args.recover_time, 1e-3))
+            q_ref = self.q_ref_start + frac * (self.q_d - self.q_ref_start)
+            err = q_ref - q
 
-        # Kills now use the TRACKING error (q_ref − q): a real runaway grows it,
-        # but the transient/ramp does not. Position kill debounced (rides the
-        # 1-sample mode-switch position glitch); velocity kill graced + debounced.
-        if np.any(np.abs(err) > self.args.pos_error_limit):
-            self._pos_trip += 1
-            if self._pos_trip >= 4:
-                self.estop(f'|q_ref−q|>{self.args.pos_error_limit} ({np.round(err,2)})')
-                return
-        else:
-            self._pos_trip = 0
-        if elapsed > self.args.grace and np.any(np.abs(qd) > self.args.vel_limit):
-            self._vel_trip += 1
-            if self._vel_trip >= 3:
-                self.estop(f'|q̇|>{self.args.vel_limit} ({np.round(qd,2)})')
-                return
-        else:
-            self._vel_trip = 0
+            # Kills use the TRACKING error (q_ref − q): a real runaway grows it,
+            # but the transient/ramp does not. Position kill debounced (rides the
+            # 1-sample mode-switch position glitch); velocity kill graced+debounced.
+            if np.any(np.abs(err) > self.args.pos_error_limit):
+                self._pos_trip += 1
+                if self._pos_trip >= 4:
+                    self.estop(f'|q_ref−q|>{self.args.pos_error_limit} ({np.round(err,2)})')
+                    return
+            else:
+                self._pos_trip = 0
+            if elapsed > self.args.grace and np.any(np.abs(qd) > self.args.vel_limit):
+                self._vel_trip += 1
+                if self._vel_trip >= 3:
+                    self.estop(f'|q̇|>{self.args.vel_limit} ({np.round(qd,2)})')
+                    return
+            else:
+                self._vel_trip = 0
 
         # Feedforward: model gravity scaled by α, EXCEPT joints in the hold-FF
         # mask (known-bad model, e.g. forearm_roll) which get their measured
@@ -374,6 +410,13 @@ def main():
                     help='joints whose FF = measured holding current (untrusted model)')
     ap.add_argument('--hold-pose', type=float, nargs=6, default=None,
                     help='setpoint (rad); default = pose at launch')
+    ap.add_argument('--float', action='store_true',
+                    help='FLOAT/compliant mode: pure gravity compensation, no '
+                         'position term — the arm holds its weight but is freely '
+                         'backdrivable by hand (records q for envelope mapping)')
+    ap.add_argument('--go-home', type=float, nargs=6, default=None,
+                    help='move here (rad) in position mode before engaging, e.g. '
+                         '--go-home 0 0 0 0 0 0 (recommended with --float)')
     ap.add_argument('--rate', type=float, default=100.0, help='control Hz')
     ap.add_argument('--ramp-in', type=float, default=0.0,
                     help='current-blend handoff (s); 0 = off. The ramped setpoint '
@@ -401,6 +444,9 @@ def main():
     print('[pdg] waiting for joint_states …')
     while rclpy.ok() and node.pos is None:
         rclpy.spin_once(node, timeout_sec=0.1)
+    if args.go_home is not None:
+        print(f'[pdg] homing to {args.go_home} in position mode …')
+        node._goto_position(np.array(args.go_home), secs=3.0)
     print('[pdg] settling / measuring holding current (1.5 s) …')
     pos_s, eff_s = [], []
     t0 = time.time()
@@ -463,6 +509,9 @@ def main():
         node.stop_requested = True
     signal.signal(signal.SIGINT, on_sigint)
 
+    if args.float:
+        print('[pdg] FLOAT mode: gravity comp only, no position hold — move the '
+              'arm by hand to map the envelope; Ctrl-C saves the recording.')
     print(f'[pdg] running @ {args.rate:.0f} Hz — Ctrl-C to stop. '
           f'Ramp-in {args.ramp_in}s.')
     t_end = time.time() + args.duration if args.duration > 0 else None
@@ -479,14 +528,26 @@ def main():
     print('[pdg] stopping — parking in position mode …')
     node._set_mode('position')
     if node.log:
-        out = args.output or f'data/pdg_a{args.alpha}_{time.strftime("%Y%m%d_%H%M%S")}.npy'
         arr = np.vstack(node.log)
-        np.save(out, arr)
-        # steady-state droop over the last second (post ramp-in)
-        tail = arr[arr[:, 0] > arr[-1, 0] - 1.0]
-        droop = node.q_d - tail[:, 1:7].mean(axis=0)
-        print(f'[pdg] steady-state droop (q_d−q) = {np.round(droop, 4).tolist()} rad')
-        print(f'[pdg] log → {out}')
+        if args.float:
+            # FLOAT: write a CSV of the recorded joint angles (easy to share /
+            # analyse the reachable envelope). Columns: time + 6 joint angles.
+            out = args.output or f'data/float_envelope_{time.strftime("%Y%m%d_%H%M%S")}.csv'
+            hdr = 'time,' + ','.join(f'{j}_pos' for j in ARM_JOINTS)
+            np.savetxt(out, np.c_[arr[:, 0], arr[:, 1:7]], delimiter=',',
+                       header=hdr, comments='')
+            sh, el = arr[:, 2], arr[:, 3]   # shoulder, elbow columns (1:7 = joints)
+            print(f'[pdg] envelope recorded: shoulder [{sh.min():+.2f},{sh.max():+.2f}] '
+                  f'elbow [{el.min():+.2f},{el.max():+.2f}] rad')
+            print(f'[pdg] CSV → {out}')
+        else:
+            out = args.output or f'data/pdg_a{args.alpha}_{time.strftime("%Y%m%d_%H%M%S")}.npy'
+            np.save(out, arr)
+            # steady-state droop over the last second (post ramp-in)
+            tail = arr[arr[:, 0] > arr[-1, 0] - 1.0]
+            droop = node.q_d - tail[:, 1:7].mean(axis=0)
+            print(f'[pdg] steady-state droop (q_d−q) = {np.round(droop, 4).tolist()} rad')
+            print(f'[pdg] log → {out}')
     if rclpy.ok():
         rclpy.shutdown()
     print('[pdg] done.')
