@@ -7,7 +7,12 @@ start the thesis' control half. The static-gravity verdict cleared PD+G as
 "safe to start" — feedback is robust to the ~0.58 scale gap, the arm won't fall.
 
 CONTROL LAW (per joint, in mA, regulation to a fixed setpoint q_d):
-    u = Kp·(q_d − q) − Kd·q̇ + α·G_mA(q)
+    u = Kp·(q_d − q) + Ki·∫(q_d − q)dt − Kd·q̇ + α·G_mA(q)
+  - Ki·∫: optional INTEGRAL term (PID), off by default (--ki-scale 0). It drives
+    the steady-state droop → 0 despite the imperfect gravity model (the shoulder
+    over-prediction / forearm_roll residual that left ~46 mm of EE error under
+    pure PD+G). Gated until after the setpoint ramp + grace and anti-windup
+    clamped (I_CAP) so a wound-up integral can't overpower the arm.
   - G_mA(q): the IDENTIFIED gravity, evaluated exactly as the static experiment
     validated it — Newton-Euler inverse dynamics on our φ at q̇=q̈=0, friction
     zeroed, divided by sysid_feasible.EFFORT_SCALE → master-motor mA (k_t and the
@@ -82,6 +87,15 @@ EE_FRAME = "ee_link"   # end-effector frame in the identified URDF
 KP_BASE = np.array([2500.0, 3500.0, 3000.0, 1200.0, 1200.0, 600.0])
 KD_BASE = np.array([ 120.0,  160.0,  150.0,   60.0,   60.0,  30.0])
 
+# Per-joint integral gains (mA/(rad·s)) and the max integral CONTRIBUTION each
+# joint may accumulate (mA, anti-windup clamp). The integral term drives the
+# steady-state droop (from the imperfect shoulder/forearm_roll gravity model) to
+# zero. Off by default (--ki-scale 0); sweep it up like α. Proximal gravity
+# joints get more authority; the I-cap stays well under the gravity load so a
+# wound-up integral can never by itself overpower the arm.
+KI_BASE = np.array([300.0, 400.0, 350.0, 250.0, 250.0, 120.0])
+I_CAP   = np.array([200.0, 400.0, 400.0, 350.0, 350.0, 150.0])
+
 # Hard per-joint current caps (mA). Shoulder/elbow carry gravity → higher, with
 # headroom for the --dual-gain diagnostic (still well under the XM540 stall ~2.3 A).
 CURRENT_CAP = np.array([700.0, 1400.0, 1400.0, 400.0, 400.0, 300.0])
@@ -147,6 +161,9 @@ class PDGravNode(Node):
 
         self.kp = KP_BASE * args.gain_scale
         self.kd = KD_BASE * args.gain_scale
+        self.ki = KI_BASE * args.ki_scale
+        self.i_err = np.zeros(6)     # integral accumulator (rad·s)
+        self.t_int_prev = None       # wall time of last integral update
         self.alpha = args.alpha
 
         self.pos = self.vel = self.eff = None
@@ -292,8 +309,26 @@ class PDGravNode(Node):
         ff = self.alpha * self.gravity_mA(q)
         ff[self.ff_hold_mask] = self.u_hold[self.ff_hold_mask]
 
-        # PD (on the ramped reference) + gravity FF (mA).
-        u = self.kp * err - self.kd * qd + ff
+        # INTEGRAL term: accumulate the tracking error to drive steady-state droop
+        # → 0 despite the imperfect gravity model (shoulder over-prediction,
+        # forearm_roll constant-FF residual). Only integrate AFTER the setpoint
+        # ramp has finished (frac≥1) and the grace window has passed — integrating
+        # during the engage transient/ramp would just wind up on a deliberately
+        # large, shrinking error. Anti-windup: clamp each joint's accumulator so
+        # its contribution ki·i_err never exceeds I_CAP.
+        if self.ki.any():
+            if self.t_int_prev is None:
+                self.t_int_prev = now
+            dt_i = now - self.t_int_prev
+            self.t_int_prev = now
+            if frac >= 1.0 and elapsed > self.args.grace:
+                self.i_err += err * dt_i
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    cap = np.where(self.ki > 0, I_CAP / np.maximum(self.ki, 1e-9), 0.0)
+                self.i_err = np.clip(self.i_err, -cap, cap)
+
+        # PD (on the ramped reference) + integral + gravity FF (mA).
+        u = self.kp * err + self.ki * self.i_err - self.kd * qd + ff
 
         # Bump-free handoff: blend from the measured holding current to the law.
         r = min(1.0, elapsed / max(self.args.ramp_in, 1e-3))
@@ -305,8 +340,10 @@ class PDGravNode(Node):
         u = soft_limit_scale(u, q)
         u = np.clip(u, -CURRENT_CAP, CURRENT_CAP)
         self.publish(u)
-        # log cols: 0=t, 1:7=q, 7:13=qd, 13:19=q_d, 19:25=u, 25=r, 26:32=q_ref
-        self.log.append(np.r_[time.time(), q, qd, self.q_d, u, r, q_ref])
+        # log cols: 0=t, 1:7=q, 7:13=qd, 13:19=q_d, 19:25=u, 25=r, 26:32=q_ref,
+        #           32:38=integral contribution ki·i_err (mA)
+        self.log.append(np.r_[time.time(), q, qd, self.q_d, u, r, q_ref,
+                              self.ki * self.i_err])
 
 
 def main():
@@ -320,6 +357,12 @@ def main():
     ap.add_argument('--urdf', default=DEFAULT_URDF, help='identified URDF for Pinocchio')
     ap.add_argument('--alpha', type=float, default=1.0, help='gravity FF gain')
     ap.add_argument('--gain-scale', type=float, default=0.5, help='global PD scale')
+    ap.add_argument('--ki-scale', type=float, default=0.0,
+                    help='global INTEGRAL scale (PID). 0 = off (verified PD+G '
+                         'behavior). Sweep up (e.g. 0.5, 1.0) to drive the '
+                         'steady-state droop → 0; integration is gated until '
+                         'after the setpoint ramp + grace, with per-joint '
+                         'anti-windup (I_CAP).')
     ap.add_argument('--grace', type=float, default=0.25,
                     help='seconds the VELOCITY kill is suppressed after the mode '
                          'switch, to ride the entry transient (the position/'
@@ -383,7 +426,8 @@ def main():
     src = f'URDF/Pinocchio ({os.path.basename(args.urdf)})' if node.use_pin else 'φ vector'
     print(f'[pdg] gravity source: {src}')
     print(f'[pdg] gravity_mA(q_d)≈ {np.round(node.gravity_mA(node.q_d)).tolist()} mA  '
-          f'(α={args.alpha}, gain×{args.gain_scale})')
+          f'(α={args.alpha}, gain×{args.gain_scale}, ki×{args.ki_scale}'
+          f'{" — INTEGRAL ON" if args.ki_scale > 0 else ""})')
     if node.use_pin:
         # Self-check: URDF gravity vs φ vector (should be ~1e-7 Nm), and FK.
         diff = np.max(np.abs(node.gravity_Nm(node.q_d)

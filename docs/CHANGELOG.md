@@ -9,7 +9,49 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
-<<<<<<< HEAD
+## 2026-06-23 — Integral term (PID + gravity comp) to kill the steady-state droop
+
+**Area:** `control/pd_grav_control.py` · roadmap stage 2 (accuracy) · opt-in
+`--ki-scale`
+
+### Problem / Motivation
+Pure PD + gravity-comp leaves a **steady-state droop** because the gravity model
+is imperfect (the shoulder first-moment over-prediction, the forearm_roll
+constant-FF residual). The 2026-06-18 end-to-end run held the EE with ≈46 mm
+error, dominated by a +0.105 rad shoulder droop. A re-confirmation hold today
+(after the velocity glitch fix — held >40 s, no false kill) showed droop
+`[0, +0.058, −0.004, −0.216, −0.153, −0.003]` rad. An integral term is the
+standard, lowest-effort way to drive that residual → 0 without needing a better
+model.
+
+### Change
+Added an optional integral term to the control law:
+`u = Kp·err + Ki·∫err·dt − Kd·q̇ + α·G_mA(q)`. Controlled by `--ki-scale`
+(default **0 = off**, preserving the verified PD+G behavior; sweep up like α).
+Per-joint `KI_BASE` (larger on the proximal gravity joints) and an anti-windup
+clamp `I_CAP` bounding each joint's integral *contribution* in mA. Integration is
+**gated** until after the setpoint ramp (`frac≥1`) and the grace window, so it
+never winds up on the deliberately large, shrinking engage-transient error. The
+integral contribution is logged (new cols 32:38) for analysis.
+
+### Evidence
+Byte-compiles; logic is offline-reasoned (no hardware yet). Anti-windup cap keeps
+a saturated integral well under the gravity load, so it cannot by itself overpower
+the arm. Hardware ki-sweep pending.
+
+### Impact
+Roadmap stage 2 (the biggest EE-accuracy win) is implemented and ready to sweep
+on hardware. Expected: droop → ~0 at the held pose, shrinking the 46 mm EE error.
+Re-run: a `--ki-scale` sweep (0 → 0.5 → 1.0) at the standard pose, compare droop.
+
+### Open questions / assumptions
+- Integral gains are first guesses; the sweep calibrates them. Watch for slow
+  oscillation (too-high Ki against the noisy Dynamixel velocity / Kd damping).
+- Also cleaned up unresolved git merge-conflict markers accidentally committed
+  into this changelog (the 06-18 vs 06-14 entry seam); both entry sets retained.
+
+---
+
 ## 2026-06-18 — END TO END: commanded the EE to a target position on the real arm
 
 **Area:** `control/pd_grav_control.py` (velocity glitch-rejection fix) · full goal
@@ -273,7 +315,9 @@ the last open question before committing to PD + gravity-compensation control.
   present current read is the master's — same mA convention as the static
   analysis. The midpoint `g` should be compared to the identified gravity current
   in the **same** master-mA space.
-=======
+
+---
+
 ## 2026-06-14 — Control phase started: `control/pdg_control.py` (PD + gravity-compensation, current mode)
 
 **Area:** new control script · uses the identified model in closed loop · control
@@ -565,7 +609,6 @@ this is a new diagnostic. Recommended primary check for any re-identified model.
 - The q→paper-G angle convention is assumed identity (paper applies its own
   q2/q3 offsets internally); the script's paper-vs-factory correlation check
   (needs a URDF run with ROS) is the validation of that assumption.
->>>>>>> 0665c46197a821d4dd4d6769437d30fc446051bb
 
 ---
 
