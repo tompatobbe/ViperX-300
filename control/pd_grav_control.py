@@ -131,6 +131,49 @@ def soft_limit_scale(u, q):
     return out
 
 
+class KeyReader:
+    """Non-blocking raw-terminal key reader for Cartesian teleop. Returns one
+    logical key per poll() ('up'/'down'/'left'/'right' arrows, 'space', or the
+    raw char) or None if nothing is pending. Restores the terminal on exit even
+    if the controller crashes (context manager)."""
+    ARROWS = {'A': 'up', 'B': 'down', 'C': 'right', 'D': 'left'}
+
+    def __init__(self):
+        import termios, tty  # noqa: F401  (POSIX only; teleop is interactive)
+        self.termios, self.tty = termios, tty
+        self.fd = sys.stdin.fileno()
+        self.saved = None
+
+    def __enter__(self):
+        self.saved = self.termios.tcgetattr(self.fd)
+        self.tty.setcbreak(self.fd)
+        return self
+
+    def __exit__(self, *exc):
+        if self.saved is not None:
+            self.termios.tcsetattr(self.fd, self.termios.TCSADRAIN, self.saved)
+
+    def poll(self):
+        # Read straight from the fd with os.read (NOT sys.stdin.read): select()
+        # polls the OS fd, but sys.stdin.read buffers internally, so a multi-byte
+        # arrow sequence (ESC [ A) gets split and the tail is lost. os.read on the
+        # fd grabs the whole sequence in one call, matching what select saw.
+        import os
+        import select
+        if not select.select([sys.stdin], [], [], 0)[0]:
+            return None
+        data = os.read(self.fd, 8).decode(errors='ignore')
+        if not data:
+            return None
+        if data[0] == '\x1b':  # escape sequence (arrow keys send ESC [ A/B/C/D)
+            if len(data) >= 3 and data[1] == '[':
+                return self.ARROWS.get(data[2])
+            return 'esc'
+        if data[0] == ' ':
+            return 'space'
+        return data[0]
+
+
 class PDGravNode(Node):
     def __init__(self, args):
         super().__init__('pd_grav_control')
@@ -168,6 +211,31 @@ class PDGravNode(Node):
 
         self.pos = self.vel = self.eff = None
         self.q_d = np.array(args.hold_pose) if args.hold_pose else None
+
+        # If an end-effector target is given, solve IK on this URDF and use the
+        # result as the setpoint (the limit gate in main() then validates it).
+        if args.xyz is not None:
+            if not self.use_pin:
+                raise SystemExit('[pdg] --xyz needs the URDF/Pinocchio model: run '
+                                 'with --gravity-source urdf and source ROS.')
+            if args.hold_pose is not None:
+                print('[pdg] both --xyz and --hold-pose given — using IK (--xyz).')
+            q_ik, conv, perr = self.solve_ik(args.xyz, args.rpy)
+            tgt = f'xyz={np.round(args.xyz, 4).tolist()}' + (
+                f' rpy={np.round(args.rpy, 3).tolist()}' if args.rpy is not None
+                else ' (position-only)')
+            print(f'[pdg] IK target {tgt}')
+            print(f'[pdg] IK converged={conv}  position error={1000*perr:.2f} mm')
+            print(f'[pdg] IK solution = {np.round(q_ik, 4).tolist()} rad')
+            if not conv:
+                raise SystemExit('[pdg] ABORT: IK did not converge — pick a reachable '
+                                 'target or relax --ik-tol.')
+            self.q_d = q_ik
+
+        if args.teleop and not self.use_pin:
+            raise SystemExit('[pdg] --teleop needs the URDF/Pinocchio model (live IK): '
+                             'run with --gravity-source urdf and source ROS.')
+        self.teleop_xyz = None  # EE jog target, initialised at run start (FK of q_d)
         self.u_hold = None           # measured holding current at handoff
         self.t_switch = None         # wall time current mode engaged
         self.estopped = False
@@ -214,6 +282,68 @@ class PDGravNode(Node):
         pin.framesForwardKinematics(self.pin_m, self.pin_d, np.asarray(q))
         M = self.pin_d.oMf[self.ee_id]
         return np.asarray(M.translation), pin.rpy.matrixToRpy(M.rotation)
+
+    def solve_ik(self, xyz, rpy=None, q_init=None):
+        """Inverse kinematics: desired EE pose → joint angles (rad), ARM_JOINTS
+        order. Damped least-squares (Levenberg-Marquardt) on the EE frame
+        Jacobian of the SAME URDF used for gravity/FK — identical method to
+        tools/ik_solve.py. Position-only unless rpy is given. q_init warm-starts
+        the solve (teleop passes the current pose for continuity). Returns
+        (q, converged, pos_err_m). Requires the URDF/Pinocchio model."""
+        if not self.use_pin:
+            raise RuntimeError('IK needs the URDF/Pinocchio model — use '
+                               '--gravity-source urdf and source ROS')
+        m, d, fid = self.pin_m, self.pin_d, self.ee_id
+        lo = np.maximum(m.lowerPositionLimit, -np.pi)
+        hi = np.minimum(m.upperPositionLimit, np.pi)
+        full = rpy is not None
+        R_des = pin.rpy.rpyToMatrix(*rpy) if full else np.eye(3)
+        oMdes = pin.SE3(R_des, np.asarray(xyz, float))
+        q0 = self.args.ik_init if q_init is None else q_init
+        q = np.clip(np.asarray(q0, float), lo, hi)
+        converged = False
+        for _ in range(self.args.ik_max_iter):
+            pin.framesForwardKinematics(m, d, q)
+            oMf = d.oMf[fid]
+            if full:
+                err = pin.log6(oMf.inverse() * oMdes).vector
+                J = pin.computeFrameJacobian(m, d, q, fid, pin.LOCAL)
+            else:
+                err = oMdes.translation - oMf.translation
+                J = pin.computeFrameJacobian(m, d, q, fid, pin.LOCAL_WORLD_ALIGNED)[:3]
+            if np.linalg.norm(err) < self.args.ik_tol:
+                converged = True
+                break
+            JJt = J @ J.T
+            dq = J.T @ np.linalg.solve(JJt + self.args.ik_damp * np.eye(JJt.shape[0]), err)
+            q = np.clip(pin.integrate(m, q, self.args.ik_step * dq), lo, hi)
+        pin.framesForwardKinematics(m, d, q)
+        pos_err = float(np.linalg.norm(oMdes.translation - d.oMf[fid].translation))
+        return q, converged, pos_err
+
+    # Cartesian jog directions (EE-position deltas, world frame), unit vectors.
+    JOG = {'up':    np.array([+1., 0., 0.]),   # forward  (+X)
+           'down':  np.array([-1., 0., 0.]),   # backward (−X)
+           'left':  np.array([0., +1., 0.]),   # left     (+Y)
+           'right': np.array([0., -1., 0.]),   # right    (−Y)
+           'space': np.array([0., 0., +1.]),   # up       (+Z)
+           'x':     np.array([0., 0., -1.])}   # down     (−Z)
+
+    def teleop_jog(self, key):
+        """Apply one Cartesian jog step for `key`: move the EE target by
+        ±step-size along an axis, re-solve IK (warm-started at the current
+        setpoint), and adopt it as the new q_d if it converges and stays inside
+        the joint soft limits. Returns a short status string for the live HUD."""
+        d = self.JOG.get(key)
+        if d is None:
+            return None
+        target = self.teleop_xyz + self.args.step_size * d
+        q_ik, conv, perr = self.solve_ik(target, self.args.rpy, q_init=self.q_d)
+        if not conv or np.any(q_ik < LIMITS_LO) or np.any(q_ik > LIMITS_HI):
+            return 'BLOCKED (unreachable / joint limit) — target held'
+        self.teleop_xyz = target          # commit only on a valid solution
+        self.q_d = q_ik
+        return 'ok'
 
     # --- operating modes --------------------------------------------------
     def _set_mode(self, mode):
@@ -410,6 +540,26 @@ def main():
                     help='joints whose FF = measured holding current (untrusted model)')
     ap.add_argument('--hold-pose', type=float, nargs=6, default=None,
                     help='setpoint (rad); default = pose at launch')
+    # End-effector target: solve IK on the SAME URDF/Pinocchio model and use the
+    # result as the setpoint (no copy-paste from tools/ik_solve.py). Needs the
+    # URDF gravity source (real Pinocchio); overrides --hold-pose if both given.
+    ap.add_argument('--xyz', type=float, nargs=3, default=None,
+                    help='desired end-effector position [m]; solves IK → setpoint')
+    ap.add_argument('--rpy', type=float, nargs=3, default=None,
+                    help='desired EE orientation [rad] for full-pose IK; omit for '
+                         'position-only')
+    ap.add_argument('--ik-init', type=float, nargs=6, default=[0, -0.6, 0.5, 0, 0, 0],
+                    help='IK initial guess (rad); default a safe folded pose')
+    ap.add_argument('--ik-tol', type=float, default=1e-4, help='IK convergence tol (m / 6D norm)')
+    ap.add_argument('--ik-damp', type=float, default=1e-4, help='IK Levenberg-Marquardt damping')
+    ap.add_argument('--ik-step', type=float, default=0.5, help='IK integration step')
+    ap.add_argument('--ik-max-iter', type=int, default=2000, help='IK max iterations')
+    # Cartesian teleop: jog the EE live with the keyboard (live IK → setpoint).
+    ap.add_argument('--teleop', action='store_true',
+                    help='keyboard Cartesian jog of the end-effector: arrows = XY '
+                         'plane, space = up, x = down, +/- = step size, q = quit')
+    ap.add_argument('--step-size', type=float, default=0.01,
+                    help='teleop EE jog increment per keypress (m)')
     ap.add_argument('--float', action='store_true',
                     help='FLOAT/compliant mode: pure gravity compensation, no '
                          'position term — the arm holds its weight but is freely '
@@ -515,10 +665,52 @@ def main():
     print(f'[pdg] running @ {args.rate:.0f} Hz — Ctrl-C to stop. '
           f'Ramp-in {args.ramp_in}s.')
     t_end = time.time() + args.duration if args.duration > 0 else None
-    while rclpy.ok() and not node.stop_requested and not node.estopped:
-        if t_end is not None and time.time() >= t_end:
-            break
-        rclpy.spin_once(node, timeout_sec=0.01)
+
+    if args.teleop:
+        # Cartesian jog: start the EE target at the current setpoint's FK and let
+        # the keyboard nudge it. Input is gated until the engage ramp finishes so
+        # jogs ride on top of a settled hold (not the recovery transient).
+        node.teleop_xyz = node.ee_pose(node.q_d)[0].copy()
+        print('\n[pdg] TELEOP — jog the end-effector:')
+        print('        ↑/↓ = forward/back (X)   ←/→ = left/right (Y)')
+        print('        space = up (Z)           x = down (Z)')
+        print('        + / - = bigger/smaller step      q = quit (park safely)')
+        print(f'        step = {args.step_size*1000:.0f} mm   '
+              f'(ignored during the {args.recover_time:.0f}s engage ramp)\n')
+        with KeyReader() as kr:
+            while rclpy.ok() and not node.stop_requested and not node.estopped:
+                if t_end is not None and time.time() >= t_end:
+                    break
+                rclpy.spin_once(node, timeout_sec=0.01)
+                key = kr.poll()
+                if key is None:
+                    continue
+                if key in ('q', 'esc'):
+                    node.stop_requested = True
+                    break
+                if key in ('+', '='):
+                    args.step_size = min(args.step_size * 1.5, 0.05)
+                    print(f'[teleop] step = {args.step_size*1000:.0f} mm')
+                    continue
+                if key in ('-', '_'):
+                    args.step_size = max(args.step_size / 1.5, 0.001)
+                    print(f'[teleop] step = {args.step_size*1000:.0f} mm')
+                    continue
+                # Only jog once the arm has settled at the hold (ramp done).
+                if node.t_switch is None or time.time() - node.t_switch < args.recover_time:
+                    continue
+                status = node.teleop_jog(key)
+                if status is None:
+                    continue
+                xyz = node.teleop_xyz
+                tag = '' if status == 'ok' else f'  [{status}]'
+                print(f'[teleop] EE target xyz=[{xyz[0]:+.3f}, {xyz[1]:+.3f}, '
+                      f'{xyz[2]:+.3f}] m{tag}')
+    else:
+        while rclpy.ok() and not node.stop_requested and not node.estopped:
+            if t_end is not None and time.time() >= t_end:
+                break
+            rclpy.spin_once(node, timeout_sec=0.01)
 
     # Cleanup with a LIVE context: hand the arm straight to its position PID,
     # which holds the present pose. We do NOT publish zero current first — the

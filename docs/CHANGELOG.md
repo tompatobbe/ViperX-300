@@ -9,6 +9,73 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-24 — Keyboard Cartesian teleop (`--teleop`): jog the EE live
+
+**Area:** `control/pd_grav_control.py` (`--teleop`, `KeyReader`, `teleop_jog`)
+
+### Problem / Motivation
+Beyond commanding a fixed EE target, an interactive way to *jog* the
+end-effector in Cartesian space is useful for demos and for exploring the
+reachable/accurate workspace by hand-eye.
+
+### Change
+Added `--teleop`: a raw-terminal (`cbreak`) non-blocking `KeyReader` polled
+inside the existing control loop. Arrow keys jog ±X/±Y, space = +Z, `x` = −Z,
+`+`/`-` resize the step (`--step-size`, default 10 mm), `q` quits (parks safely).
+Each jog moves an EE target by one step, re-solves IK **warm-started at the
+current setpoint** (`solve_ik(..., q_init=self.q_d)` for continuity), and adopts
+it as `q_d` only if it converges and stays inside the joint soft limits
+(otherwise the target is held and `BLOCKED` is shown). Jogs are gated until the
+engage ramp finishes so they ride on a settled hold. The existing PD+grav loop
+tracks the moving `q_d`; small steps keep the tracking-error/velocity kills from
+tripping. **Shift-alone cannot be detected by a terminal**, so down is bound to
+`x` rather than Shift (documented in the help banner).
+
+### Evidence
+Byte-compiles. Reuses the validated IK loop and the existing safety machinery
+(soft limits, tracking-error/velocity kills, SIGINT park). Hardware run pending.
+
+### Impact
+`python3 control/pd_grav_control.py --teleop` (ROS sourced) gives live Cartesian
+jogging. Inherits the shoulder first-moment EE-accuracy cap.
+
+---
+
+## 2026-06-24 — Unified control script: EE target → IK → hold (one command)
+
+**Area:** `control/pd_grav_control.py` (new `--xyz`/`--rpy` IK args + `solve_ik`)
+
+### Problem / Motivation
+The full goal pipeline (hold via URDF gravity → FK → IK → command the EE)
+existed but as **two scripts with copy-paste between them**: `tools/ik_solve.py`
+printed a joint solution that you pasted into `pd_grav_control.py --hold-pose`.
+With identification paused (the `cond(Φ_b)` excitation re-design was too slow to
+iterate), the priority shifted to a single end-to-end control script on the
+current best model (200 Hz `cfg-9ef2c992`).
+
+### Change
+Merged the IK into the controller. `pd_grav_control.py` gains `--xyz X Y Z`
+(+ optional `--rpy` for full pose, and `--ik-*` tuning) and a `solve_ik` method
+that runs damped least-squares on the EE-frame Jacobian of the **same**
+URDF/Pinocchio model already loaded for gravity/FK — identical method to
+`tools/ik_solve.py`. When `--xyz` is given, `__init__` solves IK and uses the
+result as the setpoint; the existing limit gate in `main()` validates it, and the
+existing ramped-setpoint engage drives the arm there. `--xyz` overrides
+`--hold-pose`; aborts if IK does not converge or the URDF model is unavailable.
+
+### Evidence
+Byte-compiles. IK routine is line-for-line the validated `ik_solve.py` loop
+(round-trip 0.1 mm, target [0.3,0,0.4]→0.06 mm per the 2026-06-18 result), now
+sharing the controller's model instance. Hardware run pending (user runs it).
+
+### Impact
+One command now commands the EE: `python3 control/pd_grav_control.py --xyz X Y Z`
+(ROS sourced). `tools/ik_solve.py` remains as a standalone preview/check.
+Inherits the known shoulder first-moment EE-accuracy cap (~46 mm) — unchanged by
+this refactor; that needs the deferred re-identification.
+
+---
+
 ## 2026-06-23 — Default command rate 50 Hz → ~6.7 Hz (stride 30): fix comms stalls
 
 **Area:** `collect_200hz.sh` default STRIDE
