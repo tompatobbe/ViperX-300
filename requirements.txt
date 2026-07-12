@@ -1,0 +1,16 @@
+# Identification pipeline (sysid_feasible.py, phi_to_urdf.py) — no ROS needed.
+# Versions pinned to the environment that produced the validated champion
+# (cfg-a92e984c, 2026-06-13).
+numpy==1.26.4
+scipy==1.15.3
+pandas==2.3.3
+matplotlib==3.5.1
+cvxpy==1.7.5
+clarabel==0.11.1
+
+# Validation & sim (compare_urdf_performance.py, compare_gravity.py, sim/) need
+# the REAL Pinocchio 3.9.0, which comes from ROS 2 Humble — NOT pip:
+#     source /opt/ros/humble/setup.bash
+# Do NOT `pip install pinocchio`: the PyPI package of that name is an unrelated
+# 0.4.3 name-squat that shadows the real one and breaks validation.
+# (See "Pinocchio / ROS gotcha" in CLAUDE.md.)

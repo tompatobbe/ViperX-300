@@ -9,6 +9,95 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-07-12 — Repo organisation for reproducibility & thesis writing
+
+**Area:** `requirements.txt` (new) · `urdf/` · `docs/RESULTS_INDEX.md` (new) ·
+`compare_urdf_performance.py` default · `README.md`
+
+### Problem / Motivation
+Gaps for anyone else (examiner, successor) using the repo, and for finding the
+right data during thesis writing: no pinned dependency list; the validated
+champion lived only under a config-hash filename in `outputs/`; `urdf/` mixed
+six superseded pre-kinematics-fix URDFs with the factory baseline; and —
+worst — `compare_urdf_performance.py`'s default `--urdf-b` still pointed at a
+pre-fix **invalid** model (`cfg-5d6e6cae`, standard-DH era), so running it with
+no args validated a known-broken model.
+
+### Change
+- **`requirements.txt`** — pinned versions of the environment that produced the
+  champion, plus the ROS-Humble/pinocchio warning.
+- **`urdf/champion.urdf`** — convenience copy of the validated deliverable with
+  a provenance header (canonical artifact path, phi, data, recipe; refresh note
+  if a new champion is crowned).
+- **`archive/urdf/`** — the six superseded URDFs moved out of `urdf/`
+  (`phi_fast_*`, `phi_feasible_*`, `phi_identified`, `cfg-5d6e6cae`,
+  `viper300_sysid`); `urdf/` now holds only champion + factory baseline.
+- **`compare_urdf_performance.py`** default `--urdf-b` → `urdf/champion.urdf`
+  (docstring example updated to the 200 Hz replicate CSV).
+- **`docs/RESULTS_INDEX.md`** — claim-by-claim map: thesis claim → artifact
+  paths → the CHANGELOG/THESIS_NOTES entry holding the numbers (no numbers
+  duplicated; single source of truth preserved).
+- **`README.md`** — env setup + run-all-checks lines in Quick start; layout
+  table updated; stale "delivered model = May `cfg-640cb8ef`" line replaced
+  with the champion.
+
+### Evidence
+`pytest tests/` 47/47, `tools/test_fk_equivalence.py` and
+`tools/test_phi_urdf_consistency.py` PASS after the changes; pinocchio 3.9
+loads `urdf/champion.urdf` (nq=6); no live script referenced the archived
+URDFs except the fixed default.
+
+### Impact
+No numerical results affected. Behaviour change: `compare_urdf_performance.py`
+with no `--urdf-b` now validates the champion instead of an invalid model —
+strictly an improvement. Anyone citing paths: superseded URDFs are now under
+`archive/urdf/`.
+
+### Open questions / assumptions
+`matplotlib==3.5.1` is old (system package); pinned as-is because it is what
+produced the figures. LICENSE file deferred — needs the author's choice if the
+repo goes public.
+
+---
+
+## 2026-07-12 — De-duplicated DH kinematics: `phi_to_urdf.py` now imports from `sysid_feasible.py`
+
+**Area:** `phi_to_urdf.py` · refactor, no numerical change
+
+### Problem / Motivation
+`DH_PARAMS`, `_dh_transform`, and the link lengths existed as a "MUST match"
+copy in `phi_to_urdf.py`. This duplication already caused real work once: the
+2026-06-13 modified-DH fix had to be applied to both files, and
+`tools/test_fk_equivalence.py` existed partly to guard the copies against
+drifting. The validation scripts (`compare_gravity.py`,
+`compare_urdf_performance.py`) already treated `sysid_feasible` as the single
+source of truth.
+
+### Change
+Removed the duplicate `DH_PARAMS` table, `_dh_transform`, and `L1–L4, L6`
+constants from `phi_to_urdf.py`; it now does
+`from sysid_feasible import DH_PARAMS, N_JOINTS, N_PARAMS, L6, _dh_transform`,
+matching the convention the validation scripts already use. The export-specific
+commutation argument (why the URDF link frame coincides with the DH frame) was
+kept as a comment on `_relative_transforms_at_zero`.
+
+### Evidence
+- Standalone URDF generated from an existing phi artifact is **byte-identical**
+  before vs. after the change.
+- `tools/test_fk_equivalence.py` still passes.
+
+### Impact
+None on results — no numerical values changed, artifact config hashes are
+unaffected, `PIPELINE_VERSION` not bumped. Future DH corrections now land in
+exactly one place.
+
+### Open questions / assumptions
+`sim/`, `control/`, and `tools/` scripts still carry their own DH/effort
+constants; left untouched deliberately (standalone hardware scripts, and
+`control/trq.py`'s torque→current mapping should not be perturbed mid-phase).
+
+---
+
 ## 2026-06-14 — Control phase started: `control/pdg_control.py` (PD + gravity-compensation, current mode)
 
 **Area:** new control script · uses the identified model in closed loop · control

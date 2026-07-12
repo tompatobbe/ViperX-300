@@ -10,6 +10,7 @@ as the next phase.
 ```
 
 **Start here:** `docs/HANDOVER.md` (current state & next steps) ·
+`docs/RESULTS_INDEX.md` (which artifact backs which thesis claim) ·
 `CLAUDE.md` (conventions, units, working agreement) ·
 `docs/CHANGELOG.md` (engineering log) · `docs/THESIS_NOTES.md` (discussion).
 
@@ -39,6 +40,14 @@ overwrite. `identify_200hz.sh` chains steps 2–4; `sweep_gamma.sh` runs the
 ## Quick start
 
 ```bash
+# Environment (identification; validation additionally needs ROS — see below)
+pip install -r requirements.txt
+
+# Run all checks (pytest needs no ROS; the two kinematics checks do)
+python3 -m pytest tests/ -q
+source /opt/ros/humble/setup.bash
+python3 tools/test_fk_equivalence.py && python3 tools/test_phi_urdf_consistency.py
+
 # Identify (numpy/scipy/cvxpy only — no ROS required)
 python3 sysid_feasible.py data/<run>.csv --no-plot --stride 1 \
     --method cvxpy --entropic 0.05 --w2 100 --solver CLARABEL
@@ -64,16 +73,16 @@ and validation fails — see "Pinocchio / ROS gotcha" in `CLAUDE.md`. Do **not**
 | `data/` | Recorded runs (CSV) + `data/logs/` (collection/sweep logs) |
 | `outputs/` | Identified artifacts: `npy/` (phi + sidecars), `urdf/`, `legacy/` |
 | `docs/` | HANDOVER, CHANGELOG, THESIS_NOTES, PAPER_SUMMARY, Paper.txt, runbooks |
-| `urdf/` | Factory `vx300s.urdf` (validation baseline / kinematics only) |
+| `urdf/` | `champion.urdf` (the validated deliverable, provenance in its header) + factory `vx300s.urdf` (validation baseline / kinematics only) |
 | `control/` | Hardware control snippets (`trq.py` = torque→current) |
 | `sim/` | Pinocchio simulation |
 | `tests/` | pytest suite (`pipeline_artifacts` round-trips) |
 | `tools/` | Working utilities off the critical path: `volt_watch.py` (supply-dip watcher), `diagnose_*`, `monitor_servos.py`, plotting/visualisation |
 | `figures/` | Saved plots |
-| `archive/` | Superseded code, kept for traceability: `identification/` (pre-SDP sysid variants), `collection/` (May-era 47 Hz collection flow), `npy/` (pre-artifact phi files), `scratch/` |
+| `archive/` | Superseded code/models, kept for traceability: `identification/` (pre-SDP sysid variants), `collection/` (May-era 47 Hz collection flow), `npy/` (pre-artifact phi files), `urdf/` (pre-kinematics-fix URDFs, all invalid), `scratch/` |
 
-The delivered, cross-validated model (May data, `cfg-640cb8ef`) is listed in
-`docs/HANDOVER.md` §TL;DR.
+The validated deliverable is **`urdf/champion.urdf`** (`cfg-a92e984c`, 2026-06-13);
+full provenance and claim-by-claim evidence map in `docs/RESULTS_INDEX.md`.
 
 ## Hardware facts (never violate silently)
 

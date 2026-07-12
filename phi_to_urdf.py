@@ -54,27 +54,12 @@ PIPELINE_NAME    = "phi_to_urdf"
 PIPELINE_VERSION = "1.1"   # 1.1: _dh_transform corrected to modified (Craig) DH to match sysid_feasible (2026-06-13); standalone frames unchanged
 
 # =============================================================================
-# DH parameters (must match sysid_fast.py / sysid_subsample.py)
+# DH parameters — single source of truth is sysid_feasible (same convention the
+# validation scripts already import from). L6 is the end-effector offset
+# (used for the ee joint, NOT as d_6).
 # =============================================================================
 
-L1 = 0.12675
-L2 = 0.30594
-L3 = 0.21981
-L4 = 0.08021
-L6 = 0.13658   # end-effector offset (used for ee joint, NOT as d_6)
-
-DH_PARAMS = np.array([
-    # alpha_prev   a_prev    d_i          theta_offset
-    [0.0,          0.0,      L1,           0.0          ],
-    [3*np.pi/2,    0.0,      0.0,         -0.437*np.pi  ],
-    [0.0,          L2,       0.0,         -0.063*np.pi  ],
-    [3*np.pi/2,    0.0,      L3+L4,        0.0          ],
-    [  np.pi/2,    0.0,      0.0,          0.0          ],
-    [3*np.pi/2,    0.0,      0.0,          0.0          ],
-], dtype=float)
-
-N_JOINTS   = 6
-N_PARAMS   = 13
+from sysid_feasible import DH_PARAMS, N_JOINTS, N_PARAMS, L6, _dh_transform
 
 JOINT_NAMES = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 LINK_NAMES  = ["waist_link", "upper_arm_link", "forearm_link",
@@ -95,26 +80,14 @@ JOINT_LIMITS = [
 # DH kinematics helpers
 # =============================================================================
 
-def _dh_transform(alpha, a, d, theta):
-    # Modified (Craig) DH:  T = Rot_x(alpha) · Trans_x(a) · Rot_z(theta) · Trans_z(d)
-    # MUST match sysid_feasible._dh_transform — the DH_PARAMS table is in this
-    # convention (alpha,a are the previous link's). Standalone export stays simple:
-    # because Trans_z(d) commutes with the joint rotation Rot_z(q), the joint
-    # rotation can move to the end, so the URDF link frame coincides with the DH
-    # frame, the joint origin is this transform at q=0, axis=z, and the inertia
-    # (already in the DH frame) transfers directly. See CHANGELOG 2026-06-13.
-    ct, st = np.cos(theta), np.sin(theta)
-    ca, sa = np.cos(alpha), np.sin(alpha)
-    return np.array([
-        [   ct,    -st,   0,    a   ],
-        [st*ca,  ct*ca, -sa, -sa*d  ],
-        [st*sa,  ct*sa,  ca,  ca*d  ],
-        [    0,      0,   0,    1    ],
-    ])
-
-
 def _relative_transforms_at_zero():
     """Return T_{i-1,i}(q=0) for each of the 6 joints (relative, not accumulated)."""
+    # _dh_transform is modified (Craig) DH, imported from sysid_feasible (formerly
+    # a "MUST match" copy here — CHANGELOG 2026-06-13). Standalone export stays
+    # simple: because Trans_z(d) commutes with the joint rotation Rot_z(q), the
+    # joint rotation can move to the end, so the URDF link frame coincides with
+    # the DH frame, the joint origin is this transform at q=0, axis=z, and the
+    # inertia (already in the DH frame) transfers directly.
     return [_dh_transform(alpha, a, d, theta_off)
             for alpha, a, d, theta_off in DH_PARAMS]
 

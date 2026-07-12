@@ -38,9 +38,9 @@ explained nothing, regardless of how it ranks against another model.
 Usage
 -----
     python3 compare_urdf_performance.py                 # defaults below
-    python3 compare_urdf_performance.py --csv data/traj_run_20260518_143818.csv \
+    python3 compare_urdf_performance.py --csv data/traj_run_200hz_20260612_161025.csv \
         --urdf-a urdf/vx300s.urdf \
-        --urdf-b urdf/traj_run_20260518_143818__sysid_feasible-v1-1__cfg-5d6e6cae.urdf \
+        --urdf-b urdf/champion.urdf \
         --friction --plot
 
 Lower RMSE / relative-error and higher R² = better model.
@@ -237,9 +237,8 @@ def main():
                    help="recorded trajectory CSV")
     p.add_argument("--urdf-a", default="urdf/vx300s.urdf",
                    help="baseline URDF (original)")
-    p.add_argument("--urdf-b",
-                   default="urdf/traj_run_20260518_143818__sysid_feasible-v1-1__cfg-5d6e6cae.urdf",
-                   help="your identified URDF")
+    p.add_argument("--urdf-b", default="urdf/champion.urdf",
+                   help="your identified URDF (default: the validated champion)")
     p.add_argument("--fc", type=float, default=10.0, help="low-pass cutoff [Hz]")
     p.add_argument("--stride", type=int, default=1, help="subsample stride")
     p.add_argument("--friction", action="store_true",
