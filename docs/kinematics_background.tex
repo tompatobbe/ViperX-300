@@ -1,0 +1,353 @@
+% ============================================================
+%  Background chapter: Kinematics of the ViperX-300
+%  Draft — editable working file
+%  Include in main thesis with \input{kinematics_background}
+% ============================================================
+
+Robotics may come in many different forms but they all have something in
+common: they share the same basics. The modern studies of robots include
+everything from kinematics and trajectory generation to motion planning. In
+order to grasp these more advanced concepts one must first recognise the
+fundamentals. As a foundation of the subject, the following draws on
+\cite{lynch2017modern}, which provides a clear explanation of the key concepts
+of robotic manipulators.
+
+\subsection{Configuration Space}
+%When entering the mathematical way of explaining how manipulators move and  (Explaining joint space vs. task space)
+To construct a robot you need various different components. The basic \textit{link} is rigid body, to permit movement of one link relative to the next one, a \textit{joint} is connected between the two consecutive links. At its core, a manipulator is a chain of such links coupled by joints. To realise the complex current pose of the manipulator, it can always be reduced to a couple of number describing the lengths of the links and the angle between them.
+The complete specification of every position of each point of the robot is a \textit{configuration}. The minimum number of real-valued coordinates required to specify the configuration is the number of degrees of freedom of the robot, and the space of all attainable configurations is the \textit{configuration space}, of C-space \cite{lynch2017modern}. For a manipulator built from any number of $n$ joints adding one degree of freedom each, a configuration is conveniently collected intro the joint variable vector
+\begin{equation}
+    \mathbf{q} = \begin{bmatrix} q_1 & q_2 & \cdots & q_n \end{bmatrix}^\top \in \mathbb{R}^n,
+\end{equation}
+where each $q_i$ is a joint angle for a revolute joint or a linear displacement for prismatic joint.
+When addressing the configuration space, generally the space is not configured to the conventional Euclidean space but rather a manifold. Taking a single revolute joint for example, it cant only move along a circle's outer rim and so forth its C-space is confined to a circle. The configuration space of a $n$-joint revolute arm will therefore result in an $n$-torus.
+
+The configuration space described above, with each point given by the joint
+variable vector $\mathbf{q}$, is what is referred to as the \textit{joint space}
+of the manipulator. These are the variables that are directly driven by the
+actuators and read back by the sensors. The joint space is however seldom the
+space in which a task is actually described. When a manipulator is asked to reach
+a point or to align its gripper, the task is expressed through the position and
+orientation of the end-effector, which belong to a separate space called the
+\textit{task space} (or operational space). Rather than joint values, the task
+space is built from poses in ordinary three-dimensional space.
+
+The link between the two spaces is the kinematics of the manipulator. The
+\textit{forward kinematics} takes a set of joint values from the joint space and
+returns the corresponding end-effector pose in the task space, while the
+\textit{inverse kinematics} goes the other way, starting from a desired pose and
+solving for the joint values that achieve it. Deriving and studying these two
+mappings is the main focus of the sections that follow.
+
+\subsection{Degrees of Freedom}
+
+When specifying the \gls{dof} of a robot, one is specifying how the robot can
+move in space. To start, the classic but straightforward example given in
+\cite{lynch2017modern} explains the simple door fixed by hinges to the frame.
+On its own, a rigid body moving freely in three-dimensional space has six
+degrees of freedom. Attaching the door to the wall through the hinge introduces
+constraints: the hinge permits rotation about its axis through an angle $\theta$
+while removing every other possible motion. Five of the six degrees of freedom
+are thereby constrained, leaving a single independent coordinate. The door
+therefore has only one degree of freedom.
+
+\begin{figure}[ht]
+  \centering
+  \input{figures/joints_dof.tex}
+  \caption{The 6 different joint categories.}
+  \label{fig:joints_dof}
+\end{figure}
+
+\subsection{Anatomy of an Open-Chain Robot}
+
+The manipulators considered in this thesis are \textit{open-chain}, or serial,
+mechanisms. In such a structure the links form a single unbranched sequence:
+starting from a fixed \textit{base} that is rigidly attached to the environment,
+each link is connected to the next by exactly one joint, terminating in the
+\textit{end-effector}, the tool or gripper through which the robot interacts with
+its surroundings. The defining property of an open chain is that there is one and
+only one kinematic path from the base to the end-effector, in contrast to
+closed-chain mechanisms where links form one or more loops. This single-path
+structure is what makes the recursive construction of the kinematics in the
+following sections possible.
+
+The \textit{joints} are the elements that introduce motion into the chain, and
+each one removes some of the relative freedom between the two links it connects
+while permitting motion along the remaining directions. The two joint types
+relevant here are the \textit{revolute} joint, which allows a pure rotation about
+a fixed axis and is parameterised by an angle, and the \textit{prismatic} joint,
+which allows a pure translation along a fixed axis and is parameterised by a
+displacement. Both contribute a single degree of freedom. More general joints
+such as cylindrical, spherical and universal joints exist and can be modelled as
+combinations of these elementary joints; the six joint categories are illustrated
+in Figure~\ref{fig:joints_dof}. The ViperX-300 studied in this work is a 6-DOF
+open-chain manipulator constructed entirely from revolute joints, a configuration
+that grants its end-effector six degrees of freedom and thus, in principle, the
+ability to attain an arbitrary position \textit{and} orientation within its
+reachable workspace.
+
+Motion is produced by the \textit{actuators} that drive the joints. In modern
+manipulators these are most commonly electric servomotors, typically brushless DC
+or stepper motors combined with a gear reduction to trade speed for the torque
+required to support the arm and its payload; hydraulic and pneumatic actuators are
+also used where high force density or compliance is needed. Each actuator applies
+a torque (for a revolute joint) or a force (for a prismatic joint) at its
+respective joint in response to a commanded control signal. Because the links are
+coupled, a torque applied at one joint propagates through the entire chain and
+influences the motion of every link beyond it. Capturing this coupling
+quantitatively is precisely the role of the dynamic model, which relates the
+vector of joint torques to the resulting joint accelerations and is treated later
+in this chapter.
+
+\subsection{Rotation Matrix}
+
+One of the fundamental tasks in modelling an open-chain robotic manipulator is to
+describe the position and orientation of its end-effector. To do this, a
+\textit{coordinate frame} is attached to each rigid body of the robot, giving a
+systematic way of relating points and directions along the chain. The kinematics
+then describes the geometric relations between these frames. To relate one frame
+to another, two separate pieces of information are needed: the \textit{position}
+of its origin, described by a translation vector, and its \textit{orientation},
+described by a rotation matrix.
+
+The orientation of a frame $B$ relative to a frame $A$ is conveniently described
+by attaching an orthonormal frame to the body and expressing its unit vectors in
+the coordinates of the reference frame \cite{siciliano2009robotics}. Collecting
+the three unit vectors $\mathbf{x}_B$, $\mathbf{y}_B$ and $\mathbf{z}_B$ as
+columns gives the $3 \times 3$ \textit{rotation matrix}
+\begin{equation}
+    ^A R_B = \begin{bmatrix}
+        \mathbf{x}_B & \mathbf{y}_B & \mathbf{z}_B
+    \end{bmatrix},
+    \label{eq:rotation_matrix}
+\end{equation}
+whose entries are the direction cosines of the axes of frame $B$ with respect to
+the axes of frame $A$.
+
+Since the columns of $^A R_B$ are the unit vectors of an orthonormal frame, they
+are mutually orthogonal and of unit norm. These conditions are compactly expressed
+as
+\begin{equation}
+    ^A R_B^\top \, ^A R_B = I,
+    \label{eq:orthogonality}
+\end{equation}
+that is, the rotation matrix is orthogonal. Postmultiplying \eqref{eq:orthogonality}
+by the inverse matrix gives the useful result
+\begin{equation}
+    ^A R_B^{-1} = {}^A R_B^\top = {}^B R_A,
+\end{equation}
+so that reversing the roles of the two frames requires nothing more than a
+transposition. The determinant of a rotation matrix equals $+1$ for a right-handed
+frame and $-1$ for a left-handed one; since only right-handed frames are used here,
+the matrices of interest belong to the \textit{special orthogonal group}
+\begin{equation}
+    SO(3) = \left\{ R \in \mathbb{R}^{3\times 3} \;\middle|\;
+    R^\top R = I, \; \det R = +1 \right\}.
+\end{equation}
+
+Frames obtained by rotating the reference frame about one of its coordinate axes
+are described by the \textit{elementary rotation matrices}. Taking the rotation
+positive when made counter-clockwise about the axis in question, a rotation by an
+angle $\vartheta$ about the $z$-, $y$- and $x$-axis is respectively given by
+\begin{equation}
+    R_z(\vartheta) = \begin{bmatrix}
+        \cos\vartheta & -\sin\vartheta & 0 \\
+        \sin\vartheta & \cos\vartheta & 0 \\
+        0 & 0 & 1
+    \end{bmatrix}, \quad
+    R_y(\vartheta) = \begin{bmatrix}
+        \cos\vartheta & 0 & \sin\vartheta \\
+        0 & 1 & 0 \\
+        -\sin\vartheta & 0 & \cos\vartheta
+    \end{bmatrix}, \quad
+    R_x(\vartheta) = \begin{bmatrix}
+        1 & 0 & 0 \\
+        0 & \cos\vartheta & -\sin\vartheta \\
+        0 & \sin\vartheta & \cos\vartheta
+    \end{bmatrix}.
+    \label{eq:elementary_rotations}
+\end{equation}
+For these matrices $R_k(-\vartheta) = R_k^\top(\vartheta)$ holds for
+$k = x, y, z$. They serve as the building blocks from which rotations about an
+arbitrary axis in space are composed, and they are the ones that reappear in the
+Denavit-Hartenberg convention.
+
+Beyond describing orientation, the rotation matrix also relates the coordinates
+of a point in two frames sharing a common origin. If a point $P$ is expressed as
+$^B\mathbf{p}$ in frame $B$, its coordinates in frame $A$ follow from
+\eqref{eq:rotation_matrix} as
+\begin{equation}
+    ^A\mathbf{p} = {}^A R_B \, ^B\mathbf{p},
+    \label{eq:coordinate_transform}
+\end{equation}
+with the inverse transformation given by
+$^B\mathbf{p} = {}^A R_B^\top \, ^A\mathbf{p}$. A third interpretation is obtained
+by regarding $^A R_B$ as an operator acting within a single frame: the product
+$R\mathbf{p}$ yields a vector rotated with respect to $\mathbf{p}$ but of the same
+norm, as follows directly from the orthogonality property
+\eqref{eq:orthogonality}. A rotation matrix therefore admits three equivalent
+geometrical meanings \cite{siciliano2009robotics}: it describes the mutual
+orientation of two coordinate frames, it transforms the coordinates of a point
+between two frames with a common origin, and it rotates a vector within one frame.
+
+Rotations are combined by matrix multiplication. Considering three frames $0$, $1$
+and $2$ with a common origin, applying \eqref{eq:coordinate_transform} twice gives
+\begin{equation}
+    ^0 R_2 = {}^0 R_1 \, ^1 R_2,
+    \label{eq:rotation_composition}
+\end{equation}
+which is interpreted as a sequence of rotations, each defined with respect to the
+frame resulting from the preceding one. The frame about whose axes a rotation is
+made is termed the \textit{current frame}, and composition about current frames is
+accordingly obtained by \textit{postmultiplication} in the order the rotations are
+performed. If instead every rotation is referred to the initial frame, which is
+then termed the \textit{fixed frame}, the same reasoning leads to composition by
+\textit{premultiplication}. Since matrix multiplication is not commutative, two
+rotations in general do not commute, and the resulting orientation depends on the
+order in which they are applied. The Denavit-Hartenberg convention introduced
+below is built on composition about current frames, and hence on postmultiplication
+of the elementary rotations in \eqref{eq:elementary_rotations}.
+
+\subsection{Homogeneous Transformation Matrix}
+
+The rotation matrix and the translation vector can be combined into a single
+description of \textit{pose} by means of the \textit{homogeneous transformation
+matrix}, which allows the pose of an entire kinematic chain to be computed by
+ordinary matrix multiplication. The pose of frame $B$
+relative to frame $A$ is written as the $4 \times 4$ matrix
+\begin{equation}
+^A T_B = \begin{bmatrix}
+n_x & s_x & a_x & P_x \\
+n_y & s_y & a_y & P_y \\
+n_z & s_z & a_z & P_z \\
+0 & 0 & 0 & 1
+\end{bmatrix} = \begin{bmatrix}
+^A R_B & ^A P_B \\
+\mathbf{0}^\top & 1
+\end{bmatrix},
+\end{equation}
+where the upper-left $3 \times 3$ block $^A R_B$ is the rotation matrix describing
+the relative orientation and the upper-right column $^A P_B$ is the position of the
+origin of frame $B$ expressed in frame $A$. The columns of the rotation block are
+frequently denoted $\mathbf{n}$, $\mathbf{s}$ and $\mathbf{a}$ (normal, sliding and
+approach), a notation that originates from the description of gripper orientation.
+The bottom row $\begin{bmatrix} 0 & 0 & 0 & 1 \end{bmatrix}$ has no geometric content
+of its own but is what makes the composition of transformations reduce to matrix
+multiplication.
+
+The set of all such matrices forms the \textit{special Euclidean group} $SE(3)$, the
+group of rigid-body motions in three-dimensional space. Its two central properties
+are exactly the ones that make it the natural tool for serial manipulators. First,
+transformations \textit{compose}: if the pose of frame $C$ is known relative to $B$,
+and that of $B$ relative to $A$, then the pose of $C$ relative to $A$ is obtained
+simply as
+\begin{equation}
+    ^A T_C = {}^A T_B \, ^B T_C,
+\end{equation}
+which generalises directly to a chain of arbitrarily many frames. Second, the inverse
+transformation has the closed form
+\begin{equation}
+    ^A T_B^{-1} = {}^B T_A = \begin{bmatrix}
+        ^A R_B^\top & -\,^A R_B^\top \, ^A P_B \\
+        \mathbf{0}^\top & 1
+    \end{bmatrix},
+\end{equation}
+so that changing the direction of a transformation requires no numerical matrix
+inversion. The compositional property is the cornerstone of forward kinematics: by
+attaching a frame to every link and writing the transformation between consecutive
+frames, the pose of the end-effector relative to the base is recovered by multiplying
+the individual link transformations together. The systematic assignment of these link
+frames is governed by the Denavit-Hartenberg convention described next.
+
+\subsection{The Denavit-Hartenberg (D-H) Convention}
+
+The \acrshort{dh} convention is a standardised procedure for attaching coordinate
+frames to the links of a serial manipulator. Without such a standard, the placement
+of link frames would be arbitrary and the transformation between two consecutive
+frames would in general require six parameters --- three for position and three for
+orientation. The insight underlying the D-H convention is that, by choosing the frames
+according to a fixed set of rules, the relative pose of two consecutive frames can
+always be described by only \textit{four} parameters instead of six
+\cite{siciliano2009robotics}. This reduction is achieved by aligning each frame's
+$z$-axis with its joint axis and its $x$-axis along the common normal between
+consecutive joint axes, which removes two of the degrees of freedom in the frame
+placement.
+
+The four parameters, illustrated for link $i$, are the \textit{link length} $a_i$,
+the \textit{link twist} $\alpha_i$, the \textit{link offset} $d_i$, and the
+\textit{joint angle} $\vartheta_i$. For a revolute joint the joint angle
+$\vartheta_i$ is the variable quantity and the remaining three parameters are fixed
+by the geometry of the link; for a prismatic joint the offset $d_i$ is variable and
+the other three are constant.
+
+The convention works along a recursive algorithm that transforms frame $i{-}1$ into
+frame $i$ through four successive elementary transformations, performed in order:
+\begin{enumerate}
+    \item a rotation about the $z_{i-1}$-axis by the angle $\theta_i$, aligning
+          $x_{i-1}$ with $x_i$;
+    \item a translation along the $z_{i-1}$-axis by the offset $d_i$;
+    \item a translation along the (now rotated) $x_i$-axis by the length $a_i$;
+    \item a rotation about the $x_i$-axis by the twist $\alpha_i$, aligning
+          $z_{i-1}$ with $z_i$.
+\end{enumerate}
+Expressing each step as a homogeneous transformation and multiplying them together
+yields the link transformation matrix
+\begin{equation}
+^{i-1}T_i = \begin{bmatrix}
+\cos\theta_i & -\sin\theta_i\cos\alpha_i & \sin\theta_i\sin\alpha_i & a_i\cos\theta_i \\
+\sin\theta_i & \cos\theta_i\cos\alpha_i & -\cos\theta_i\sin\alpha_i & a_i\sin\theta_i \\
+0 & \sin\alpha_i & \cos\alpha_i & d_i \\
+0 & 0 & 0 & 1
+\end{bmatrix}.
+\label{eq:dh_matrix}
+\end{equation}
+Applying this procedure to every joint of the ViperX-300 yields the parameter set
+listed in Table~\ref{tab:dh_params}, from which the complete kinematic model of the
+manipulator follows.
+
+\subsection{Forward and Inverse Kinematics}
+
+\subsubsection{Forward Kinematics}
+With a link frame assigned to each joint and the corresponding D-H transformation
+\eqref{eq:dh_matrix} written for every link, the \textit{forward kinematics} of the
+manipulator follows directly from the compositional property of homogeneous
+transformations. Given a joint configuration
+$\mathbf{q} = \begin{bmatrix} q_1 & \cdots & q_n \end{bmatrix}^\top$, the pose of the
+end-effector frame $n$ relative to the base frame $0$ is obtained by chaining the
+individual link transformations:
+\begin{equation}
+    ^0 T_n(\mathbf{q}) = {}^0 T_1(q_1)\, ^1 T_2(q_2) \;\cdots\; ^{n-1} T_n(q_n).
+    \label{eq:fk_chain}
+\end{equation}
+The result is a single $4 \times 4$ matrix encoding both the position and the
+orientation of the end-effector as a function of the joint variables. Forward
+kinematics is, from a computational standpoint, entirely benign: for any given
+$\mathbf{q}$ the pose is unique and is obtained by a fixed sequence of matrix
+multiplications, with no iteration or ambiguity. It constitutes the mapping from
+joint space to task space introduced earlier.
+
+\subsubsection{Inverse Kinematics}
+The \textit{inverse kinematics} problem reverses this mapping: given a desired
+end-effector pose $^0 T_n^{\,\star}$, the task is to find a joint configuration
+$\mathbf{q}$ for which $^0 T_n(\mathbf{q}) = {}^0 T_n^{\,\star}$. Although it is the
+inverse of a problem that was straightforward, it is considerably more delicate, for
+three reasons. First, \textit{existence} is not guaranteed: a solution exists only if
+the requested pose lies within the reachable workspace of the manipulator. Second, the
+solution is generally \textit{not unique}: a 6-DOF arm can frequently reach the same
+pose through several distinct configurations --- the familiar elbow-up and elbow-down
+postures being the classic example --- so the inverse map is one-to-many. Third, the
+equations to be solved are \textit{nonlinear} in the joint variables, since the entries
+of \eqref{eq:fk_chain} contain products of sines and cosines of the joint angles, and
+for a general manipulator no closed-form solution exists.
+
+In such cases the inverse kinematics must be solved numerically, typically by iterative
+schemes based on the manipulator Jacobian, which raise the usual concerns of
+convergence, computational cost and behaviour near singularities. Closed-form analytic
+solutions are nonetheless available for manipulators whose geometry satisfies certain
+conditions; the most important of these is the presence of a \textit{spherical wrist},
+in which the axes of the final three joints intersect at a common point. This geometry
+allows the problem to be \textit{decoupled}, with the wrist centre position determining
+the first three joints and the end-effector orientation determining the last three,
+each subproblem then admitting an analytic solution. Whether such a decoupling applies
+to the ViperX-300 follows directly from its D-H parameters and is examined in the
+kinematic analysis of this work.
