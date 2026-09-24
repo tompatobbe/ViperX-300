@@ -90,6 +90,90 @@ ACCEL_MAX = np.array([3.5, 5.0, 5.0, 6.0, 6.0, 6.0])   # rad/s²
 
 _K_VALS = np.arange(1, N_F + 1, dtype=float)   # [1, 2, 3, 4, 5]
 
+# ── Operating-point tour (workspace coverage) ────────────────────────────────
+# The cond(Φ_b) optimiser conditions the identification regressor but a single
+# Fourier curve is a thin thread through the workspace: coverage_report.py shows
+# only ~21% of the shoulder×elbow collision-free grid is ever visited, and the
+# waist (dynamics-invariant to its angle → optimiser blind to it) barely sweeps.
+# Remedy: keep the optimised multisine as FAST local excitation but ride it on a
+# SLOW operating-point tour q0(t) that walks across the reachable region — waist
+# and wrist_rotate over their full range, shoulder/elbow ALONG their collision
+# band (so the operating point stays collision-free). The union of (slow tour) ×
+# (fast wiggle) fills the workspace; the existing q_all safety gates still apply.
+# Distinct, near-incommensurate periods per joint → a space-filling Lissajous.
+TOUR_PERIODS = np.array([223.0, 257.0, 191.0, 311.0, 281.0, 167.0])  # s, per joint
+TOUR_RAMP    = 15.0   # s: smooth raised-cosine ramp so the tour starts AT REST
+# Per-joint tour half-amplitudes [rad]. Waist/wrist_rotate sweep wide; shoulder
+# rides its range; elbow's spread is the small PERPENDICULAR play inside the band
+# (its centre tracks the shoulder along the band, see _band_center).
+TOUR_AMP = np.array([2.40, 1.00, 0.18, 0.90, 0.90, 2.40])
+# Down-scale of the multisine when touring, applied ONLY to the dynamically
+# degenerate joints (waist, wrist_rotate) so the slow full-range tour dominates
+# their motion. Shoulder/elbow/forearm_roll/wrist_angle keep their FULL optimised
+# multisine — their conditioning and coverage (the cond optimiser's whole job) are
+# left untouched; only their tiny residual tour headroom is budgeted away.
+TOUR_MS_SCALE = 0.4
+# Which joints the multisine is scaled down on (the degenerate ones).
+TOUR_SCALED_JOINTS = np.array([True, False, False, False, False, True])
+
+
+def _band_center(shoulder: np.ndarray) -> np.ndarray:
+    """Mid-line of the shoulder–elbow collision band: elbow value that sits
+    centred between the upper/lower band edges for a given shoulder angle."""
+    hi = SH_EL_BAND_HI[0] * shoulder + SH_EL_BAND_HI[1]
+    lo = SH_EL_BAND_LO[0] * shoulder + SH_EL_BAND_LO[1]
+    return 0.5 * (hi + lo)
+
+
+PB_TOUR = 0.05   # rad: position buffer kept below the box limits while touring
+
+
+def _tour_amplitudes(ms_swing: np.ndarray, q0_eff: np.ndarray) -> np.ndarray:
+    """Per-joint tour half-amplitudes, capped so the COMBINED motion (tour +
+    multisine, about the effective centre q0_eff) respects the box and the
+    shoulder–elbow collision band. ms_swing = peak |multisine deviation| per joint."""
+    amp = TOUR_AMP.copy()
+    # Box budget: distance from q0_eff to the nearer limit, less buffer and the
+    # multisine swing that also rides on q0_eff.
+    head_hi = LIMITS_HI - q0_eff - PB_TOUR - ms_swing
+    head_lo = q0_eff - LIMITS_LO - PB_TOUR - ms_swing
+    box_budget = np.maximum(np.minimum(head_hi, head_lo), 0.0)
+    amp = np.minimum(amp, box_budget)
+    # Elbow (idx 2): only the perpendicular play inside the band's narrowest
+    # half-width, less margin, less elbow swing and the band-centre shift from the
+    # shoulder swing (slope·ms_swing_shoulder) — the coupling the cond design fights.
+    sh_grid = np.linspace(LIMITS_LO[1], LIMITS_HI[1], 50)
+    band_w = ((SH_EL_BAND_HI[0] * sh_grid + SH_EL_BAND_HI[1])
+              - (SH_EL_BAND_LO[0] * sh_grid + SH_EL_BAND_LO[1]))
+    slope = abs(SH_EL_BAND_HI[0])
+    el_budget = band_w.min() / 2.0 - SH_EL_MARGIN - ms_swing[2] - slope * ms_swing[1]
+    amp[2] = np.clip(amp[2], 0.0, max(el_budget, 0.0))
+    return amp
+
+
+def build_tour_waypoints(t: np.ndarray, a: np.ndarray, b: np.ndarray,
+                         q0: np.ndarray, ms_scale: float = TOUR_MS_SCALE) -> np.ndarray:
+    """COVERAGE-mode waypoints: the optimised multisine ridden on a slow
+    operating-point tour. The multisine is scaled down (ms_scale) ONLY on the
+    dynamically degenerate joints (TOUR_SCALED_JOINTS: waist, wrist_rotate), whose
+    motion the slow full-range tour then dominates; the conditioning-critical
+    joints keep their full optimised multisine. The tour starts at rest (raised-
+    cosine ramp) and its amplitudes are budgeted so the combined path stays inside
+    the box and the collision band. Returns q_all (T, 6)."""
+    t = np.atleast_1d(np.asarray(t, float))
+    scale = np.where(TOUR_SCALED_JOINTS, ms_scale, 1.0)
+    a_s, b_s = a * scale[:, None], b * scale[:, None]
+    # Effective centre: degenerate joints centred in their range (their q0 is
+    # dynamically irrelevant); others keep the optimised design q0.
+    q0_eff = np.asarray(q0, float).copy()
+    q0_eff[TOUR_SCALED_JOINTS] = HOME_POS[TOUR_SCALED_JOINTS]
+    q_ms = traj_pos(t, a_s, b_s, q0_eff)
+    ms_swing = np.max(np.abs(traj_pos(t, a_s, b_s, np.zeros(N_JOINTS))), axis=0)
+    amp = _tour_amplitudes(ms_swing, q0_eff)
+    env = 0.5 * (1.0 - np.cos(np.pi * np.clip(t / TOUR_RAMP, 0, 1)))   # 0→1, rest start
+    osc = amp[None, :] * np.sin(2 * np.pi * t[:, None] / TOUR_PERIODS[None, :]) * env[:, None]
+    return q_ms + osc
+
 
 # ── Trajectory functions ──────────────────────────────────────────────────────
 
@@ -512,6 +596,14 @@ def main() -> None:
                              'use the vetted design for deterministic collection)')
     parser.add_argument('--stride',      type=int,   default=4,
                         help='Send every N-th waypoint; effective command rate = rate/stride')
+    parser.add_argument('--tour', action='store_true',
+                        help='ride the multisine on a slow operating-point tour for '
+                             'workspace COVERAGE (waist/wrist_rotate full range, '
+                             'shoulder/elbow along the collision band); fills the '
+                             'workspace the cond optimiser leaves thin')
+    parser.add_argument('--tour-scale', type=float, default=TOUR_MS_SCALE,
+                        help='multisine amplitude factor while touring (leaves '
+                             'position headroom for the tour)')
     args = parser.parse_args()
 
     # ── Coefficients
@@ -540,7 +632,15 @@ def main() -> None:
     t_vec = np.arange(n, dtype=float) * dt
 
     print(f'[run] Pre-computing {n} waypoints ({args.duration:.0f} s @ {args.rate:.0f} Hz) …')
-    q_all = traj_pos(t_vec, a, b, q0)      # (n, N_JOINTS)
+    if args.tour:
+        # COVERAGE MODE: fast multisine (scaled, around 0) + slow tour offsets.
+        # The combined q_all is what the existing safety gates below validate, so
+        # any band/limit breach from the superposition is caught before hardware.
+        q_all = build_tour_waypoints(t_vec, a, b, q0, ms_scale=args.tour_scale)
+        print(f'[run] TOUR coverage mode: degenerate-joint multisine ×{args.tour_scale} '
+              f'+ operating-point tour (periods {TOUR_PERIODS.tolist()} s)')
+    else:
+        q_all = traj_pos(t_vec, a, b, q0)      # (n, N_JOINTS)
     # Box-limit gate BEFORE clipping: a stale/loaded design that exceeds the
     # current limits (e.g. a pre-shoulder-floor design) must NOT be silently
     # clipped into a distorted trajectory — flag it so it can be re-optimised.

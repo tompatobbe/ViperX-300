@@ -296,6 +296,109 @@ degrades gracefully to a torque-faithful model regardless) is a result in itself
 
 ---
 
+## The coupling weight w₂ sets *model fidelity*, not the realisation (2026-06-24)
+
+**The setup an examiner must understand first.** Eq. 16 carries **two** parameter
+vectors, and the distinction is the whole point:
+- `phi_b` — the **base-parameter** variable. It alone touches the data, through
+  `w1·‖W_base·phi_b − τ‖²`. Left free it reaches the unconstrained least-squares
+  fit (here REL ≈ 0.42).
+- `phi` — the **84 standard per-link parameters** that are exported to the URDF and
+  that the reported REL [step 6] is actually evaluated on (`W_full·phi`). `phi` is
+  tied to the data *only indirectly*, through the coupling `w2·‖phi_b − Lᵀ·phi‖²`,
+  where `Lᵀ·phi` is the base-parameter *projection* of the standard parameters.
+
+So there are really two base-parameter vectors in flight: `phi_b` (fits the data)
+and `Lᵀ·phi` (what the shipped model actually realises). **`w2` is the only thing
+pulling them together.** This is the key that was previously under-appreciated.
+
+**The finding (w₂ sweep on `traj_run_200hz_20260624`).** Holding everything else
+fixed (γ=0.005, stride 4, motor-inertia on) and sweeping only `w2`:
+
+| `w2` | mean REL (shipped `phi`) | shoulder mass |
+|---|---|---|
+| 0.005 (old default) | 0.705 | 0.50 |
+| 1.0 | 0.578 | 0.51 |
+| 10 | 0.501 | 1.11 |
+| 100 | **0.442** | 3.39 |
+
+At the **default `w2 = 5e-3` the shipped model was badly under-coupled**: `phi_b`
+fit the data (≈0.42) but `Lᵀphi` drifted to the entropic prior, so the *exported*
+parameters predicted torque at REL 0.71 — and every per-link inertial value sat
+pinned at the generic blob (`m = 0.5`, `I^c = 0.002`, `mcy` at the 1e-5 sign
+floor). Raising `w2` forces `Lᵀphi → phi_b`, i.e. forces the **shipped model's own
+base parameters onto the data-optimal ones**; REL falls monotonically to 0.44 ≈ the
+unconstrained ceiling ≈ the paper's in-sample 0.43, and the first moments `mcy`
+lift off the floor to real, data-driven values (elbow 0.054, forearm −0.079, …).
+**That is the precise sense in which higher `w2` is a "better model": the artifact
+we deliver — the URDF — finally carries the base parameters the data identified,
+instead of the regulariser's prior.**
+
+**Reconciliation with the earlier "REL is realisation-invariant" note (solver
+section).** That claim — RNEA torque depends only on base parameters, so the
+realisation knob γ cannot move REL — is correct **but conditional on the coupling
+being tight** (`Lᵀphi ≈ phi_b`). `w2` and γ are *orthogonal axes*:
+- **`w2` = fidelity axis.** It decides whether the shipped standard parameters even
+  *carry* the identified base parameters. It moves REL. It is **not** a realisation
+  choice; under-setting it ships a genuinely worse model.
+- **γ (with generic `P0`) = realisation axis.** Given tight coupling, it only
+  selects *which* physically-consistent per-link split realises the (fixed) base
+  parameters in the data null-space. It does **not** move REL.
+
+The two prior failure modes (γ=0 mass-collapse; pure −log det mass-explosion) were
+realisation-axis pathologies. The new one is a *fidelity-axis* pathology, and the
+cure is the opposite direction: `w2` must be **large**, not small.
+
+**The runaway masses at high `w2` are the already-documented null-space issue, not
+a new bug.** At `w2 = 100` the shoulder mass reaches 3.39 kg (CAD ≈ 0.80 kg) and
+wrist_rotate 0.028 kg. These are unobservable directions: individual masses do not
+enter `Lᵀphi`, so they leave torque prediction *and* a Pinocchio simulation
+unchanged (this is exactly why REL keeps falling while the mass triples). Per the
+existing **reporting policy**, we claim only the base parameters as identified; the
+per-link masses are an entropy-regularised realisation at a generic scale, never a
+measurement. The correct lever to tame the ugly split is therefore **γ at the
+generic `P0` scale** (raise it alongside high `w2`), **not** lowering `w2` — which
+would silently re-damage the model — and emphatically **not** a CAD prior (the
+no-CAD-prior integrity argument above is untouched by any of this).
+
+**Policy / how to frame it.**
+1. Set `w2` large enough that mean REL has plateaued at the unconstrained ceiling
+   (here ≥ ~50–100); report the sweep as evidence the plateau, not the knob, is what
+   we ship at. The default 5e-3 is documented as the *wrong* operating point.
+2. Then, if a tidy URDF realisation is wanted, raise γ at the **generic scale** to
+   pull the null-space masses to plausible magnitudes, verifying REL is unmoved
+   (it must be, by the realisation-invariance argument — and now we can *test* that
+   invariance precisely because the coupling is tight).
+3. **Open structural question (candidate cleanup):** the soft coupling with a
+   tunable, REL-critical `w2` is a liability — the default silently shipped a bad
+   model for every prior run. Replacing it with the **hard equality `phi_b = Lᵀ·phi`**
+   (eliminating `phi_b`, so the standard parameters fit the data directly subject to
+   the LMIs) removes the knob entirely and always yields the best feasible fit. Worth
+   a paragraph on why Eq. 16's soft form exists (numerical conditioning of the SDP)
+   vs. the hard form, and whether the paper's own `w2` is documented.
+
+**Validated outcome (2026-06-24) — w₂=10 is the sweet spot, and it generalises.**
+The choice between w₂=10 and higher was settled on **held-out** data, not in-sample
+REL (the principled test, since extra in-sample gain at high w₂ is noise-fitting in
+low-`λ_k` directions — the runaway masses being the tell). Identifying at w₂=10 /
+γ=0.005 / stride 1 on the tour run and validating on a *different* run (0623):
+- **Held-out mean rel.err 0.426 ≈ in-sample 0.477** — negligible gap ⇒ **not
+  overfitting**; w₂=10 locked. (A w₂=100 model would be expected to widen this gap.)
+- Beats the manufacturer CAD URDF by **54.8% rigid-body RMSE** (0.602 vs 1.334 Nm;
+  CAD is only +9.3% over a zero-torque baseline — its inertials are near-useless for
+  dynamics), and **matches the paper's validation benchmark** (0.426 vs 0.392),
+  *beating* it on elbow (0.120 vs 0.200) and forearm (0.321 vs 0.540).
+- **Physical-consistency corroboration with no CAD prior:** identified masses are all
+  in the real arm's 0.08–0.83 kg range (total 2.62 kg vs CAD 2.54), with the
+  well-conditioned links landing near CAD (shoulder 0.825 vs 0.793) and the
+  weakly-excited ones staying lumped (elbow 0.699 vs 0.322) — the exact
+  identifiable-vs-null-space split the theory predicts. Our held-out **fitted Ia
+  stays positive/physical** (elbow 0.049) where CAD's goes negative (shoulder −0.29)
+  to compensate for rigid-body error — independent evidence the model is right for the
+  right reasons. This is the validated URDF that ends the identification phase.
+
+---
+
 ## Encoder velocity vs differentiated position; and dropout removal (2026-06-11)
 
 An examiner will reasonably ask two things about the data pipeline: *"why obtain q̇
@@ -590,6 +693,68 @@ collinearity; (ii) free the q0_i offsets; (iii) open the shoulder forward range;
 deliverable: the model was never wrong for lack of a good *solver* — it was
 identified from data that never made the first moments separable, because the
 trajectory designer optimised the wrong condition number.
+
+## Workspace coverage vs. conditioning: the operating-point tour (2026-06-24)
+
+A distinct, examiner-relevant point that the cond(Φ_b) work did **not** address:
+**identifiability and workspace coverage are different objectives, and for a
+non-ideal model they come apart.**
+
+**We match the paper's excitation method.** The paper (Momani & Hosseinzadeh §4,
+Eq. 7/11) uses a per-joint finite Fourier series (Δf = 0.1 Hz, N_i = 5) whose
+coefficients minimise cond(Φ_b) subject to joint limits, solved with fmincon.
+`run_trajectories.py` does exactly this (SLSQP ≈ fmincon active-set), plus extra
+safety constraints (collision band, rest-to-rest, bounded q0). So the method is
+faithful — the gap is not in *how* we excite.
+
+**Why a faithful, well-conditioned design still under-covers the workspace.**
+
+1. *The waist is dynamically degenerate.* By the base's vertical-axis symmetry the
+   dynamics are invariant to the **waist angle** (only its velocity/acceleration
+   enter Φ_b). cond(Φ_b) is therefore *blind* to where the waist points — the
+   optimiser has no incentive to sweep it, and empirically it didn't (recorded
+   waist coverage 53–64% of range; wrist_rotate, weakly coupled, similar). This is
+   a property of the objective, not a bug, and is equally true in the paper.
+
+2. *A single Fourier curve is a thin thread.* One fundamental traces one closed
+   curve and repeats it, so duration does **not** add coverage. `coverage_report.py`
+   quantifies this: the cond design visits 93% of the *reachable* (in-band)
+   shoulder×elbow cells but only because that band is intrinsically narrow; the
+   per-joint thinness on the degenerate joints is the real gap.
+
+3. *Why the paper didn't need coverage but we do.* For an exact rigid body the
+   regressor is linear in the inertial parameters, so a well-conditioned (even
+   spatially thin) trajectory identifies a **globally valid** model — the paper's
+   clean model generalises across the workspace. Our model carries residual
+   non-rigid-body effects (shoulder first-moment lumping, the joint-4 defect,
+   gearbox stiction ≈0.58, no reflected-rotor Ia at 200 Hz; see the other notes),
+   which make the fit **local** — it degrades at poses the trajectory never
+   visited. The user observed exactly this on hardware (the controller could not
+   hold edge poses the training data missed). So coverage is a *practical*
+   requirement our model imposes that the idealised theory hides.
+
+**The remedy — separate the two objectives.** Ride the optimised multisine (fast
+local excitation, kept for conditioning) on a **slow operating-point tour** q0(t)
+that walks across the reachable region (`build_tour_waypoints`). Distinct
+near-incommensurate per-joint periods give a space-filling Lissajous; a
+raised-cosine ramp starts it at rest. Crucially the multisine is scaled down
+**only on the degenerate joints** (waist, wrist_rotate) — where conditioning is
+indifferent — so the conditioning-critical shoulder/elbow keep their full
+optimised excitation. Tour amplitudes are *budgeted* against the multisine swing
+so the combined path stays inside the box and the collision band.
+
+**Validated offline** (the anti-iteration point — no hardware time spent to find
+out): coverage_report.py on the existing design + tour gives waist 64→93%,
+wrist_rotate 53→97%, shoulder×elbow band occupancy held at 93%, and
+cond(Φ_b)/first-moment correlation unchanged (235 / corr 0.568 vs 0.575) — i.e.
+**full-range coverage at no cost to identifiability.** This is the methodological
+contribution: workspace coverage and regressor conditioning are achieved by
+*different* mechanisms (a slow tour vs. a fast optimised multisine), combined.
+
+Honest scope note for the dissertation: exhaustively visiting all 6-DoF joint
+*combinations* is combinatorially impossible and unnecessary; what identification
+needs is good conditioning of the gravity/inertia subspace plus broad coverage of
+the configuration manifold, which the tour delivers within the collision-free set.
 
 ## Excitation redesign outcome + the workspace-geometry decorrelation ceiling (2026-06-23)
 

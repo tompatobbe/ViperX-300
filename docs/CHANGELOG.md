@@ -9,6 +9,173 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-06-24 — Repointed control/IK defaults to the new validated model
+
+**Area:** `control/pd_grav_control.py`, `control/pdg_control.py`, `tools/ik_solve.py`
+default model/URDF constants.
+
+### Problem / Motivation
+The held-out-validated model (entry below) became the working model for the
+control phase, but the control and IK scripts still hardcoded **old 0612-run
+defaults** (`pd_grav_control.py` + `ik_solve.py` → `cfg-9ef2c992`;
+`pdg_control.py` → `cfg-a92e984c`). The just-committed teleop (09b1375) was
+therefore doing gravity compensation against a superseded model unless `--urdf`
+was passed explicitly.
+
+### Change
+Pointed `DEFAULT_URDF` (and `pd_grav_control.py`'s paired `DEFAULT_MODEL` φ) at
+the new best pair:
+- φ:    `outputs/npy/…_124955__sysid_feasible-v1-5__cfg-27904c2e.npy`
+- URDF: `outputs/urdf/…_124955__…cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf`
+
+### Evidence
+Verified both artifacts exist on disk and are a matched pair (the URDF stem
+embeds the `cfg-27904c2e` φ). `compare_urdf_performance.py` default A (CAD) and
+`diagnose_phi.py` default (`vx300s.urdf` CAD reference) are left as-is — those
+are intentional baselines, not the identified model.
+
+### Impact
+- Teleop / PD-gravity / IK now default to the CAD-beating, paper-matching model.
+- No re-identification needed. Re-run any control/gravity-comp tests that relied
+  on the default (they were silently using the old model).
+
+---
+
+## 2026-06-24 — Validated identified model (tour data + w₂=10): beats CAD 55%, matches paper benchmark
+
+**Area:** Identification on `data/traj_run_200hz_20260624_124955.csv` (tour-covered
+900 s), `--w2 10 --entropic 0.005 --motor-inertia --stride 1`; held-out validation
+via `compare_urdf_performance.py` on `data/traj_run_200hz_20260623_145333.csv`.
+URDF: `outputs/urdf/…cfg-27904c2e…cfg-451881cf.urdf`. φ: `…cfg-27904c2e.npy`.
+
+### Problem / Motivation
+Close out the identification phase: with workspace coverage fixed (tour) and the
+coupling weight diagnosed (w₂), produce a URDF and prove it on data it was **not**
+identified on — the exit criterion for moving to control.
+
+### Change
+Locked the operating point at **w₂=10, γ=0.005, stride 1** (full data) after the
+w₂ sweep showed 10 is the sweet spot: in-sample mean REL 0.477 (≈ the 0.422
+unconstrained ceiling) with **physically plausible masses** (0.08–0.83 kg, total
+2.62 kg vs CAD 2.54), whereas w₂=100 buys ~0.03 REL at the cost of runaway masses
+(shoulder 3.4 kg) — overfitting the noise-dominated, weakly-excited directions.
+
+### Evidence
+Held-out on the 0623 run (56k samples, 281 s), our model **B** vs manufacturer CAD
+**A** vs zero-torque baseline:
+- **Rigid-body only (primary):** B mean RMSE 0.602 Nm (R² +0.42) vs A 1.334 Nm
+  (R² −4.46) vs baseline 1.471 — **B −54.8% vs CAD**; CAD only +9.3% over zero.
+- **Friction+Ia fitted (REL-comparable):** B mean rel.err **0.426** (R² 0.787),
+  per-joint [0.547, 0.260, 0.120, 0.321, 0.544, 0.767] — vs the **paper's validation
+  mean 0.392** ([0.333, 0.168, 0.200, 0.540, 0.381, 0.731]): we **beat the paper on
+  elbow (0.120 vs 0.200) and forearm (0.321 vs 0.540)**, trail on waist/wrist_angle.
+- **No overfitting:** held-out 0.426 ≈ in-sample 0.477 (tiny gap) ⇒ w₂=10 confirmed.
+- Our fitted Ia stays physical (elbow 0.049, shoulder 0.028); CAD's goes negative
+  (shoulder −0.29) to mask its rigid-body error.
+- Mass realisation: well-conditioned links recover near-CAD (shoulder 0.825 vs
+  0.793; wrist_rotate 0.081 vs 0.098), others stay lumped (elbow 0.699 vs 0.322) —
+  exactly as base-parameter theory predicts; no CAD prior used.
+
+### Impact
+- **Identification phase exit criterion met: a held-out-validated, CAD-beating,
+  paper-matching URDF exists.** This is the working model for the control phase.
+- Open follow-ups (do not block control): waist (0.55) and wrist_angle (0.54) are
+  the worst vs the paper — friction-model candidates; shoulder first moment still
+  small (possible residual lumping); optional w₂=100 held-out run to quantify the
+  overfit gap as a thesis figure.
+- See THESIS_NOTES "The coupling weight w₂…" and the validation note below.
+
+---
+
+## 2026-06-24 — Coupling weight w₂ diagnosed as a model-fidelity knob; default was under-coupling
+
+**Area:** `sysid_feasible.py` (`identify_sdp` w₂ coupling), identification on
+`data/traj_run_200hz_20260624_124955.csv` (first identification on the
+tour-covered 900 s run). Docs: THESIS_NOTES "The coupling weight w₂ sets model
+fidelity, not the realisation".
+
+### Problem / Motivation
+First SDP identification on the new tour-covered run returned a *worse* constrained
+fit than unconstrained (REL 0.73 vs 0.42) with every inertial parameter pinned at
+the generic entropic prior (m=0.5, I^c=0.002, mcy at the 1e-5 sign floor). Lowering
+the entropic weight γ (0.05→0.005) barely moved it — ruling out over-regularisation.
+
+### Change
+No code change yet — a diagnosis. The reported REL [step 6] is evaluated on the
+exported standard parameters `phi`, which are tied to the data only through the
+coupling `w2·‖phi_b − Lᵀ·phi‖²`. The **default `w2 = 5e-3` under-couples**: `phi_b`
+fits the data but `Lᵀphi` (what the URDF realises) drifts to the prior. Swept
+`w2 ∈ {5e-3, 1, 10, 100}`.
+
+### Evidence
+Mean REL falls monotonically 0.705 → 0.578 → 0.501 → **0.442** as `w2` rises to
+100, reaching the unconstrained ceiling (0.422) and the paper's in-sample mean
+(0.432); shoulder 0.26, elbow 0.12, forearm 0.32 now match the paper, and first
+moments lift off the sign floor to data-driven values (elbow mcy 0.054, forearm
+−0.079). Cost barely changes (1224.4→1226.5), confirming the coupling term is
+near-free. Side effect: at high `w2` the unobservable individual masses drift
+(shoulder 3.39 kg vs CAD 0.80) — the known data-null-space realisation issue, which
+does **not** affect torque/dynamics (base-parameter argument) and is to be handled
+by γ at the generic scale, never by lowering `w2` or adding a CAD prior. Motor
+inertias stable (elbow Ia 0.059, wrist_angle 0.030). waist (0.62) and wrist_rotate
+(0.86) stay high *even unconstrained* — a friction/SNR limit, not a coupling one.
+
+### Impact
+- For identification, **`w2` must be set on the REL plateau (≥ ~50–100)**, not the
+  5e-3 default. Final run pending at `--stride 1` once `w2`/γ are locked. Re-run:
+  `python3 sysid_feasible.py data/traj_run_200hz_20260624_124955.csv --fs 200 \
+   --method cvxpy --entropic <γ> --solver CLARABEL --drop-glitches --motor-inertia \
+   --w2 <plateau>`
+- Then export URDF and run held-out validation (`compare_urdf_performance.py`).
+- Candidate cleanup flagged in THESIS_NOTES: replace the soft, tunable coupling
+  with the hard equality `phi_b = Lᵀ·phi` to remove the fragile knob.
+
+---
+
+## 2026-06-24 — Workspace coverage: operating-point tour + offline coverage report
+
+**Area:** `run_trajectories.py` (`--tour`, `build_tour_waypoints`),
+`tools/coverage_report.py` (new), `collect_200hz.sh` (`--tour`)
+
+### Problem / Motivation
+The cond(Φ_b) excitation is faithful to the paper but under-covers the workspace:
+the waist is dynamically degenerate (cond is blind to its angle → barely swept,
+53–64% of range) and a single Fourier curve is a thin thread, so the identified
+model failed to hold edge poses on hardware. Re-collecting 900 s only to discover
+the gaps is the time sink to eliminate.
+
+### Change
+1. `tools/coverage_report.py` — offline diagnostic: per-joint visited range / %
+   coverage and shoulder×elbow occupancy of the *reachable* (in-band) cells, for a
+   design .npz (with optional `--tour`) or a recorded CSV. Vets coverage in
+   seconds before any hardware time.
+2. `run_trajectories.py --tour` — rides the optimised multisine on a slow
+   operating-point tour q0(t) (`build_tour_waypoints`): near-incommensurate
+   per-joint Lissajous periods, raised-cosine rest start. The multisine is scaled
+   down ONLY on the degenerate joints (waist, wrist_rotate); shoulder/elbow keep
+   full optimised excitation. Tour amplitudes are budgeted against the multisine
+   swing so the combined path stays inside the box and the collision band — the
+   existing q_all safety gates still apply.
+3. `collect_200hz.sh --tour` passes the flag through.
+
+### Evidence
+Offline on `outputs/excitation_design.npz` + tour (coverage_report + a direct
+safety check): waist 64→93%, wrist_rotate 53→97%, wrist_angle 95%; shoulder×elbow
+reachable-band occupancy held at 93% (97% shoulder, 72% elbow — unchanged from the
+design); box overshoot ≤0, band slack +0.079 rad, start velocity 0, peak vel/accel
+under limits. `--design-only --tour` reports cond(Φ_b)≈235, shoulder·elbow m·c_y
+corr +0.568 — unchanged vs the design's 0.575: **full-range coverage at no cost to
+conditioning.** Hardware collection pending (user runs it).
+
+### Impact
+Vet a design's coverage offline, then collect with coverage:
+`python3 tools/coverage_report.py outputs/excitation_design.npz --tour` then
+`bash collect_200hz.sh --design outputs/excitation_design.npz --tour`. Then
+re-identify (with `--motor-inertia`) on the new CSV. See THESIS_NOTES
+"Workspace coverage vs. conditioning".
+
+---
+
 ## 2026-06-24 — Keyboard Cartesian teleop (`--teleop`): jog the EE live
 
 **Area:** `control/pd_grav_control.py` (`--teleop`, `KeyReader`, `teleop_jog`)

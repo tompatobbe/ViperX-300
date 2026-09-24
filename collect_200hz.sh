@@ -17,6 +17,10 @@
 #   --duration S      trajectory duration, integer seconds (default 900; smoke 60)
 #   --design PATH     replay a vetted, optimised design .npz (run_trajectories
 #                     --load); deterministic, skips the optimiser. Recommended.
+#   --tour            ride the multisine on a slow operating-point tour for full
+#                     workspace COVERAGE (waist/wrist_rotate full range; shoulder/
+#                     elbow conditioning preserved). Vet offline first:
+#                     python3 tools/coverage_report.py <design.npz> --tour
 #   --seed N          excitation coefficient seed (default 42; ignored with --design)
 #   --stride N        send every N-th waypoint (default 30 → ~6.7 Hz commands;
 #                     matches the 0.5 Hz trajectory bandwidth, robust to comms stalls)
@@ -41,10 +45,12 @@ ROBOT_MODEL="vx300s"
 SMOKE=0
 SKIP_LATENCY=0
 DESIGN=""
+TOUR=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --smoke)        SMOKE=1;           shift   ;;
+        --tour)         TOUR=1;            shift   ;;
         --duration)     DURATION="$2";     shift 2 ;;
         --design)       DESIGN="$2";       shift 2 ;;
         --seed)         SEED="$2";         shift 2 ;;
@@ -179,6 +185,12 @@ if [[ -n "$DESIGN" ]]; then
 else
     step 5/6 "Excitation trajectory (${DURATION}s, seed $SEED, stride $STRIDE)"
     TRAJ_ARGS=(--seed "$SEED")
+fi
+# --tour: ride the multisine on a slow operating-point tour for workspace COVERAGE
+# (waist/wrist_rotate full range, shoulder/elbow conditioning preserved). Vet the
+# coverage offline first: python3 tools/coverage_report.py <design.npz> --tour
+if [[ "$TOUR" = 1 ]]; then
+    TRAJ_ARGS+=(--tour)
 fi
 python3 -u run_trajectories.py \
     --duration "$DURATION" --rate 200 --robot-model "$ROBOT_MODEL" \

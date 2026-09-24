@@ -24,8 +24,8 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_URDF = os.path.join(
-    REPO, "outputs/urdf/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__"
-          "cfg-9ef2c992__phi_to_urdf-v1-1__cfg-3ef0a00c.urdf")
+    REPO, "outputs/urdf/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__"
+          "cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf")
 EE_FRAME = "ee_link"
 ARM_JOINTS = ['waist', 'shoulder', 'elbow', 'forearm_roll', 'wrist_angle', 'wrist_rotate']
 

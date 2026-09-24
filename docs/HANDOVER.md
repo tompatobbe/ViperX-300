@@ -1,9 +1,78 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-13 (VALIDATED-URDF GATE MET → control unblocked).
-**Phase:** identification **complete for the control gate** — the champion is
-validated on gravity (static benchmark) *and* dynamics (held-out torque, beats
-the no-model baseline + factory). Next phase: **control**.
+**Last updated:** 2026-06-24 (control phase: teleop bring-up).
+**Phase:** **control.** Identification is closed — new held-out-validated champion
+exists (beats CAD 55 %, matches the paper benchmark). Now standing up the
+PD+gravity controller and Cartesian teleop on hardware.
+
+---
+
+## ⇒ SESSION HANDOVER — 2026-06-24 (read this first)
+
+**Where we are.** Identification phase is **closed**. Today's champion (CHANGELOG
+2026-06-24 "Validated identified model"):
+- **φ:**   `outputs/npy/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e.npy`
+- **URDF:** `outputs/urdf/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf`
+- Recipe: tour-covered 900 s run, `--w2 10 --entropic 0.005 --motor-inertia --stride 1`.
+  Held-out on the 0623 run: rigid-body beats CAD **−54.8 %**; friction+Ia-fitted
+  mean rel.err **0.426** vs the paper's 0.392 (beats the paper on elbow/forearm).
+
+**Defaults repointed today.** The control/IK scripts were still defaulting to OLD
+0612 models; updated to the new champion (CHANGELOG 2026-06-24 "Repointed control/
+IK defaults"): `control/pd_grav_control.py` (φ + URDF), `control/pdg_control.py`,
+`tools/ik_solve.py` → `cfg-27904c2e` / `cfg-451881cf`. So `--teleop` needs no
+`--urdf`. (`compare_urdf_performance.py` A and `diagnose_phi.py` keep the CAD
+`vx300s.urdf` as an intentional baseline.)
+
+**Teleop bring-up — where it stopped.** Launched `control/pd_grav_control.py
+--teleop`. It tripped the **position-error kill on forearm_roll** (joint 4):
+```
+KILL: |q_ref−q|>0.5 ([ 0.09 -0.05 -0.01 -0.52 -0.16 -0.04])
+```
+Diagnosis from the log (`data/pdg_a1.0_20260624_151002.npy`): **the kill was
+correct, not over-sensitive.** The setpoint `q_d` forearm_roll = **−0.519** but
+the arm was physically at **+0.026** at engage → a 0.55 rad commanded move on a
+joint that **never moved** (v≈0 the whole 9 s) while current ramped to **−322 mA**
+(cap 400). The joint was mechanically blocked (self-colliding "resting on itself"
+pose) / stiction-locked; the error grew along the `--recover-time` ramp until it
+crossed 0.5. Root cause: **`q_d` ≠ the actual pose** (a `--hold-pose`/`--xyz`
+target was in play) and the arm started from a self-colliding rest pose.
+
+**Next time at the bench:**
+1. Move to a **clear, non-self-colliding pose first** (`control/set_pos.py` or
+   `--go-home <reachable>`), so no joint is against a stop.
+2. For a hold/teleop session, **pass no target** (`--teleop` alone) so `q_d` = the
+   captured current pose → `err≈0` at start; jog from there.
+3. The startup prints `setpoint q_d` and the engage pose — if any joint differs by
+   ~0.5 rad, don't run.
+4. Safety-margin reference table is in this session's chat; the kill knobs are
+   `--pos-error-limit` (0.5 rad, 4-sample debounce), `--vel-limit` (2.5 rad/s),
+   `--grace` (0.25 s), `--recover-time` (3 s), soft limits (`LIMITS_LO/HI`, 0.20
+   buffer), current caps `[700,1400,1400,400,400,300]`. **Do NOT just loosen
+   `--pos-error-limit`** — it would let the controller shove current into a stuck
+   joint. Fix the setpoint/pose instead.
+
+### ⇒ TODO (no code written yet — for next session)
+
+1. **Gripper must be turn-off-able (warming up — do soon).** The gripper is
+   currently holding gripper current and **getting warm** while the arm controller
+   runs. `pd_grav_control.py` controls the 6 arm joints but the gripper stays
+   energized/holding. Need a way to **de-energize (torque off) the gripper** — at
+   startup and/or on exit — so it doesn't sit drawing current and heating. (Check:
+   does the controller need to release the gripper motor / set its torque-enable
+   off, separate from the arm mode switch?)
+
+2. **Boundary-lock instead of kill when a joint is pinned at its limit (idea).**
+   Hypothesis: a joint sitting at its **mechanical/soft maximum** (suspected the
+   **wrist_rotate / gripper rotation**, joint 6) can't reach a commanded setpoint,
+   so `q_ref−q` grows and trips the position-error kill — even though the arm is
+   physically fine. Proposed behaviour: **if a joint is at its max limit, lock it
+   to that limit and do NOT raise the position-error kill, provided everything
+   else is OK** (i.e. effort/current at that joint is **not excessive** — below
+   some threshold, not saturating the cap). So "at limit + low effort = benign,
+   hold there" rather than an e-stop. NB: today's *observed* kill was forearm_roll,
+   not wrist_rotate, but the mechanism is the same (joint physically can't reach
+   its setpoint); the rule should apply to any joint pinned at a limit.
 
 ---
 

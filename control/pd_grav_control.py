@@ -74,11 +74,13 @@ except Exception:
 
 ARM_JOINTS = sf.ARM_JOINTS
 DEFAULT_MODEL = os.path.join(
-    REPO, "outputs/npy/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-9ef2c992.npy")
+    REPO, "outputs/npy/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e.npy")
 # Identified URDF (same model as DEFAULT_MODEL φ; gravity matches to ~1e-7 Nm).
+# Best held-out-validated model (2026-06-24, tour data, w₂=10): beats CAD 55 %,
+# matches the paper benchmark. See docs/CHANGELOG.md 2026-06-24.
 DEFAULT_URDF = os.path.join(
-    REPO, "outputs/urdf/traj_run_200hz_20260612_131613__sysid_feasible-v1-5__"
-          "cfg-9ef2c992__phi_to_urdf-v1-1__cfg-3ef0a00c.urdf")
+    REPO, "outputs/urdf/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__"
+          "cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf")
 EE_FRAME = "ee_link"   # end-effector frame in the identified URDF
 
 # Per-joint base gains (mA/rad, mA/(rad/s)). Conservative starting point; scale
