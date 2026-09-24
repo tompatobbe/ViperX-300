@@ -9,6 +9,42 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-09-25 — Merged `main` into `Refactoring`; `urdf/champion.urdf` refreshed to the 2026-06-24 model
+
+**Area:** `urdf/champion.urdf` · `docs/RESULTS_INDEX.md` · `README.md` · branch merge
+
+### Problem / Motivation
+The `Refactoring` branch (repo organisation + kinematics theory chapter) forked
+before the 2026-06-24 lab session. Its `urdf/champion.urdf` and
+`RESULTS_INDEX.md` therefore named the 2026-06-13 model `cfg-a92e984c`, while
+`main` had since crowned the held-out-validated `cfg-27904c2e`. After the merge,
+`compare_urdf_performance.py` (default `--urdf-b urdf/champion.urdf`) would have
+silently validated the superseded model.
+
+### Change
+- Merged `main` → `Refactoring`; the only textual conflict (this file) resolved
+  by keeping both sides' entries, newest first.
+- `urdf/champion.urdf` rebuilt from
+  `outputs/urdf/…124955__sysid_feasible-v1-5__cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf`
+  with a new provenance header (recipe taken from the φ `.json` sidecar).
+- `RESULTS_INDEX.md`: deliverable, datasets and claims updated to the new
+  champion; the 2026-06-13 model kept as "previous champion" because the gravity
+  benchmark claim is backed by it.
+- `README.md`: deliverable line → `cfg-27904c2e`.
+
+### Evidence
+URDF body byte-identical to the canonical artifact; pinocchio 3.9 loads it
+(nq=6, joint names in canonical order, total mass 2.622 kg = the 2.62 kg in the
+2026-06-24 validation entry).
+
+### Impact
+No re-identification. `compare_urdf_performance.py` with no `--urdf-b` now
+validates `cfg-27904c2e`. Open: `compare_gravity.py` has not been run on
+`cfg-27904c2e`; `HANDOVER.md` §CURRENT STATE still describes `cfg-a92e984c`
+(pre-existing on `main`).
+
+---
+
 ## 2026-07-12 — Repo organisation for reproducibility & thesis writing
 
 **Area:** `requirements.txt` (new) · `urdf/` · `docs/RESULTS_INDEX.md` (new) ·
@@ -95,6 +131,939 @@ exactly one place.
 `sim/`, `control/`, and `tools/` scripts still carry their own DH/effort
 constants; left untouched deliberately (standalone hardware scripts, and
 `control/trq.py`'s torque→current mapping should not be perturbed mid-phase).
+
+---
+
+## 2026-06-24 — Repointed control/IK defaults to the new validated model
+
+**Area:** `control/pd_grav_control.py`, `control/pdg_control.py`, `tools/ik_solve.py`
+default model/URDF constants.
+
+### Problem / Motivation
+The held-out-validated model (entry below) became the working model for the
+control phase, but the control and IK scripts still hardcoded **old 0612-run
+defaults** (`pd_grav_control.py` + `ik_solve.py` → `cfg-9ef2c992`;
+`pdg_control.py` → `cfg-a92e984c`). The just-committed teleop (09b1375) was
+therefore doing gravity compensation against a superseded model unless `--urdf`
+was passed explicitly.
+
+### Change
+Pointed `DEFAULT_URDF` (and `pd_grav_control.py`'s paired `DEFAULT_MODEL` φ) at
+the new best pair:
+- φ:    `outputs/npy/…_124955__sysid_feasible-v1-5__cfg-27904c2e.npy`
+- URDF: `outputs/urdf/…_124955__…cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf`
+
+### Evidence
+Verified both artifacts exist on disk and are a matched pair (the URDF stem
+embeds the `cfg-27904c2e` φ). `compare_urdf_performance.py` default A (CAD) and
+`diagnose_phi.py` default (`vx300s.urdf` CAD reference) are left as-is — those
+are intentional baselines, not the identified model.
+
+### Impact
+- Teleop / PD-gravity / IK now default to the CAD-beating, paper-matching model.
+- No re-identification needed. Re-run any control/gravity-comp tests that relied
+  on the default (they were silently using the old model).
+
+---
+
+## 2026-06-24 — Validated identified model (tour data + w₂=10): beats CAD 55%, matches paper benchmark
+
+**Area:** Identification on `data/traj_run_200hz_20260624_124955.csv` (tour-covered
+900 s), `--w2 10 --entropic 0.005 --motor-inertia --stride 1`; held-out validation
+via `compare_urdf_performance.py` on `data/traj_run_200hz_20260623_145333.csv`.
+URDF: `outputs/urdf/…cfg-27904c2e…cfg-451881cf.urdf`. φ: `…cfg-27904c2e.npy`.
+
+### Problem / Motivation
+Close out the identification phase: with workspace coverage fixed (tour) and the
+coupling weight diagnosed (w₂), produce a URDF and prove it on data it was **not**
+identified on — the exit criterion for moving to control.
+
+### Change
+Locked the operating point at **w₂=10, γ=0.005, stride 1** (full data) after the
+w₂ sweep showed 10 is the sweet spot: in-sample mean REL 0.477 (≈ the 0.422
+unconstrained ceiling) with **physically plausible masses** (0.08–0.83 kg, total
+2.62 kg vs CAD 2.54), whereas w₂=100 buys ~0.03 REL at the cost of runaway masses
+(shoulder 3.4 kg) — overfitting the noise-dominated, weakly-excited directions.
+
+### Evidence
+Held-out on the 0623 run (56k samples, 281 s), our model **B** vs manufacturer CAD
+**A** vs zero-torque baseline:
+- **Rigid-body only (primary):** B mean RMSE 0.602 Nm (R² +0.42) vs A 1.334 Nm
+  (R² −4.46) vs baseline 1.471 — **B −54.8% vs CAD**; CAD only +9.3% over zero.
+- **Friction+Ia fitted (REL-comparable):** B mean rel.err **0.426** (R² 0.787),
+  per-joint [0.547, 0.260, 0.120, 0.321, 0.544, 0.767] — vs the **paper's validation
+  mean 0.392** ([0.333, 0.168, 0.200, 0.540, 0.381, 0.731]): we **beat the paper on
+  elbow (0.120 vs 0.200) and forearm (0.321 vs 0.540)**, trail on waist/wrist_angle.
+- **No overfitting:** held-out 0.426 ≈ in-sample 0.477 (tiny gap) ⇒ w₂=10 confirmed.
+- Our fitted Ia stays physical (elbow 0.049, shoulder 0.028); CAD's goes negative
+  (shoulder −0.29) to mask its rigid-body error.
+- Mass realisation: well-conditioned links recover near-CAD (shoulder 0.825 vs
+  0.793; wrist_rotate 0.081 vs 0.098), others stay lumped (elbow 0.699 vs 0.322) —
+  exactly as base-parameter theory predicts; no CAD prior used.
+
+### Impact
+- **Identification phase exit criterion met: a held-out-validated, CAD-beating,
+  paper-matching URDF exists.** This is the working model for the control phase.
+- Open follow-ups (do not block control): waist (0.55) and wrist_angle (0.54) are
+  the worst vs the paper — friction-model candidates; shoulder first moment still
+  small (possible residual lumping); optional w₂=100 held-out run to quantify the
+  overfit gap as a thesis figure.
+- See THESIS_NOTES "The coupling weight w₂…" and the validation note below.
+
+---
+
+## 2026-06-24 — Coupling weight w₂ diagnosed as a model-fidelity knob; default was under-coupling
+
+**Area:** `sysid_feasible.py` (`identify_sdp` w₂ coupling), identification on
+`data/traj_run_200hz_20260624_124955.csv` (first identification on the
+tour-covered 900 s run). Docs: THESIS_NOTES "The coupling weight w₂ sets model
+fidelity, not the realisation".
+
+### Problem / Motivation
+First SDP identification on the new tour-covered run returned a *worse* constrained
+fit than unconstrained (REL 0.73 vs 0.42) with every inertial parameter pinned at
+the generic entropic prior (m=0.5, I^c=0.002, mcy at the 1e-5 sign floor). Lowering
+the entropic weight γ (0.05→0.005) barely moved it — ruling out over-regularisation.
+
+### Change
+No code change yet — a diagnosis. The reported REL [step 6] is evaluated on the
+exported standard parameters `phi`, which are tied to the data only through the
+coupling `w2·‖phi_b − Lᵀ·phi‖²`. The **default `w2 = 5e-3` under-couples**: `phi_b`
+fits the data but `Lᵀphi` (what the URDF realises) drifts to the prior. Swept
+`w2 ∈ {5e-3, 1, 10, 100}`.
+
+### Evidence
+Mean REL falls monotonically 0.705 → 0.578 → 0.501 → **0.442** as `w2` rises to
+100, reaching the unconstrained ceiling (0.422) and the paper's in-sample mean
+(0.432); shoulder 0.26, elbow 0.12, forearm 0.32 now match the paper, and first
+moments lift off the sign floor to data-driven values (elbow mcy 0.054, forearm
+−0.079). Cost barely changes (1224.4→1226.5), confirming the coupling term is
+near-free. Side effect: at high `w2` the unobservable individual masses drift
+(shoulder 3.39 kg vs CAD 0.80) — the known data-null-space realisation issue, which
+does **not** affect torque/dynamics (base-parameter argument) and is to be handled
+by γ at the generic scale, never by lowering `w2` or adding a CAD prior. Motor
+inertias stable (elbow Ia 0.059, wrist_angle 0.030). waist (0.62) and wrist_rotate
+(0.86) stay high *even unconstrained* — a friction/SNR limit, not a coupling one.
+
+### Impact
+- For identification, **`w2` must be set on the REL plateau (≥ ~50–100)**, not the
+  5e-3 default. Final run pending at `--stride 1` once `w2`/γ are locked. Re-run:
+  `python3 sysid_feasible.py data/traj_run_200hz_20260624_124955.csv --fs 200 \
+   --method cvxpy --entropic <γ> --solver CLARABEL --drop-glitches --motor-inertia \
+   --w2 <plateau>`
+- Then export URDF and run held-out validation (`compare_urdf_performance.py`).
+- Candidate cleanup flagged in THESIS_NOTES: replace the soft, tunable coupling
+  with the hard equality `phi_b = Lᵀ·phi` to remove the fragile knob.
+
+---
+
+## 2026-06-24 — Workspace coverage: operating-point tour + offline coverage report
+
+**Area:** `run_trajectories.py` (`--tour`, `build_tour_waypoints`),
+`tools/coverage_report.py` (new), `collect_200hz.sh` (`--tour`)
+
+### Problem / Motivation
+The cond(Φ_b) excitation is faithful to the paper but under-covers the workspace:
+the waist is dynamically degenerate (cond is blind to its angle → barely swept,
+53–64% of range) and a single Fourier curve is a thin thread, so the identified
+model failed to hold edge poses on hardware. Re-collecting 900 s only to discover
+the gaps is the time sink to eliminate.
+
+### Change
+1. `tools/coverage_report.py` — offline diagnostic: per-joint visited range / %
+   coverage and shoulder×elbow occupancy of the *reachable* (in-band) cells, for a
+   design .npz (with optional `--tour`) or a recorded CSV. Vets coverage in
+   seconds before any hardware time.
+2. `run_trajectories.py --tour` — rides the optimised multisine on a slow
+   operating-point tour q0(t) (`build_tour_waypoints`): near-incommensurate
+   per-joint Lissajous periods, raised-cosine rest start. The multisine is scaled
+   down ONLY on the degenerate joints (waist, wrist_rotate); shoulder/elbow keep
+   full optimised excitation. Tour amplitudes are budgeted against the multisine
+   swing so the combined path stays inside the box and the collision band — the
+   existing q_all safety gates still apply.
+3. `collect_200hz.sh --tour` passes the flag through.
+
+### Evidence
+Offline on `outputs/excitation_design.npz` + tour (coverage_report + a direct
+safety check): waist 64→93%, wrist_rotate 53→97%, wrist_angle 95%; shoulder×elbow
+reachable-band occupancy held at 93% (97% shoulder, 72% elbow — unchanged from the
+design); box overshoot ≤0, band slack +0.079 rad, start velocity 0, peak vel/accel
+under limits. `--design-only --tour` reports cond(Φ_b)≈235, shoulder·elbow m·c_y
+corr +0.568 — unchanged vs the design's 0.575: **full-range coverage at no cost to
+conditioning.** Hardware collection pending (user runs it).
+
+### Impact
+Vet a design's coverage offline, then collect with coverage:
+`python3 tools/coverage_report.py outputs/excitation_design.npz --tour` then
+`bash collect_200hz.sh --design outputs/excitation_design.npz --tour`. Then
+re-identify (with `--motor-inertia`) on the new CSV. See THESIS_NOTES
+"Workspace coverage vs. conditioning".
+
+---
+
+## 2026-06-24 — Keyboard Cartesian teleop (`--teleop`): jog the EE live
+
+**Area:** `control/pd_grav_control.py` (`--teleop`, `KeyReader`, `teleop_jog`)
+
+### Problem / Motivation
+Beyond commanding a fixed EE target, an interactive way to *jog* the
+end-effector in Cartesian space is useful for demos and for exploring the
+reachable/accurate workspace by hand-eye.
+
+### Change
+Added `--teleop`: a raw-terminal (`cbreak`) non-blocking `KeyReader` polled
+inside the existing control loop. Arrow keys jog ±X/±Y, space = +Z, `x` = −Z,
+`+`/`-` resize the step (`--step-size`, default 10 mm), `q` quits (parks safely).
+Each jog moves an EE target by one step, re-solves IK **warm-started at the
+current setpoint** (`solve_ik(..., q_init=self.q_d)` for continuity), and adopts
+it as `q_d` only if it converges and stays inside the joint soft limits
+(otherwise the target is held and `BLOCKED` is shown). Jogs are gated until the
+engage ramp finishes so they ride on a settled hold. The existing PD+grav loop
+tracks the moving `q_d`; small steps keep the tracking-error/velocity kills from
+tripping. **Shift-alone cannot be detected by a terminal**, so down is bound to
+`x` rather than Shift (documented in the help banner).
+
+### Evidence
+Byte-compiles. Reuses the validated IK loop and the existing safety machinery
+(soft limits, tracking-error/velocity kills, SIGINT park). Hardware run pending.
+
+### Impact
+`python3 control/pd_grav_control.py --teleop` (ROS sourced) gives live Cartesian
+jogging. Inherits the shoulder first-moment EE-accuracy cap.
+
+---
+
+## 2026-06-24 — Unified control script: EE target → IK → hold (one command)
+
+**Area:** `control/pd_grav_control.py` (new `--xyz`/`--rpy` IK args + `solve_ik`)
+
+### Problem / Motivation
+The full goal pipeline (hold via URDF gravity → FK → IK → command the EE)
+existed but as **two scripts with copy-paste between them**: `tools/ik_solve.py`
+printed a joint solution that you pasted into `pd_grav_control.py --hold-pose`.
+With identification paused (the `cond(Φ_b)` excitation re-design was too slow to
+iterate), the priority shifted to a single end-to-end control script on the
+current best model (200 Hz `cfg-9ef2c992`).
+
+### Change
+Merged the IK into the controller. `pd_grav_control.py` gains `--xyz X Y Z`
+(+ optional `--rpy` for full pose, and `--ik-*` tuning) and a `solve_ik` method
+that runs damped least-squares on the EE-frame Jacobian of the **same**
+URDF/Pinocchio model already loaded for gravity/FK — identical method to
+`tools/ik_solve.py`. When `--xyz` is given, `__init__` solves IK and uses the
+result as the setpoint; the existing limit gate in `main()` validates it, and the
+existing ramped-setpoint engage drives the arm there. `--xyz` overrides
+`--hold-pose`; aborts if IK does not converge or the URDF model is unavailable.
+
+### Evidence
+Byte-compiles. IK routine is line-for-line the validated `ik_solve.py` loop
+(round-trip 0.1 mm, target [0.3,0,0.4]→0.06 mm per the 2026-06-18 result), now
+sharing the controller's model instance. Hardware run pending (user runs it).
+
+### Impact
+One command now commands the EE: `python3 control/pd_grav_control.py --xyz X Y Z`
+(ROS sourced). `tools/ik_solve.py` remains as a standalone preview/check.
+Inherits the known shoulder first-moment EE-accuracy cap (~46 mm) — unchanged by
+this refactor; that needs the deferred re-identification.
+
+---
+
+## 2026-06-23 — Default command rate 50 Hz → ~6.7 Hz (stride 30): fix comms stalls
+
+**Area:** `collect_200hz.sh` default STRIDE
+
+### Problem / Motivation
+Streaming position commands at 50 Hz (stride 4) for a 0.5 Hz-bandwidth trajectory
+floods the WSL2/usbipd link and triggers ~100–280 ms comms stalls (schedule
+shifts → brief catch-up). A 60 s smoke at `--stride 30` ran with 0 stalls and
+passed verification, but the full-run command omitted the flag and re-stalled —
+the fix wasn't persisted.
+
+### Change
+Default `STRIDE 4 → 30` (~6.7 Hz commands, still 13× the trajectory bandwidth).
+The servo's time-based profile interpolates between the sparser waypoints; data is
+still recorded at 200 Hz (identification uses the measured motion, not the
+commands), so fidelity is unaffected. A comms gap shorter than one ~150 ms command
+interval no longer forces a schedule shift.
+
+### Evidence
+Smoke at stride 30: `400 commands in 59.9 s, 0 stalls absorbed`, Collection OK,
+verification PASS (198 Hz recording). Excitation trajectory itself is clamp-safe
+(shoulder stays in [−0.5,+0.3] during the run; sub-−1.3 only at the sleep pose).
+
+### Impact
+Collection now completes. Run `bash collect_200hz.sh --design <npz>` (stride 30
+default) for the full 900 s.
+
+---
+
+## 2026-06-23 — Reduce excitation speed: full-speed motion moved the (clamped) base
+
+**Area:** `run_trajectories.py` velocity/acceleration limits
+
+### Problem / Motivation
+At full speed the extended arm's reaction torque moved the clamped platform
+(observed on hardware). That risks tipping AND violates the **fixed-base
+assumption** the identification depends on — a moving base corrupts the torque
+data regardless of excitation quality. The waist (fast yaw of the extended arm)
+was the dominant driver (accel amplitude 8.6, highest of all joints).
+
+### Change
+Cut per-joint limits: `VEL_MAX 3.14→[1.8,2.2,2.2,2.5,2.5,2.5]`,
+`ACCEL_MAX 10→[3.5,5,5,6,6,6]` — waist hardest, shoulder/elbow retain meaningful
+acceleration for inertia/Coriolis excitation.
+
+### Evidence
+Re-optimised: waist accel 2.1 (was 8.6), shoulder/elbow ~4.3; feasible, band ✓,
+rest ✓, **corr 0.569 unchanged** (first-moment decorrelation is speed-independent).
+cond(Φ_b) rose ~150→~239 — the cost is weaker inertia excitation (lean on the
+`Ia·q̈` motor-inertia term at identification instead).
+
+### Impact
+Keeps the base fixed → valid data. Re-run the design; tune limits further if the
+base still moves (or back up if it's rock-solid).
+
+---
+
+## 2026-06-23 — Centre the q0 operating points (fix lopsided waist motion)
+
+**Area:** `run_trajectories.py`
+
+### Problem / Motivation
+The free q0 offsets parked dynamically-degenerate joints at extremes — above all
+the WAIST (whose angle does not affect the dynamics at all, base vertical-axis
+symmetry, so cond(Φ_b) is indifferent to it): q0_waist = −1.41, with the waist
+sweeping only the negative half. Lopsided, unintuitive motion the user flagged on
+hardware.
+
+### Change
+Constrain |q0 − joint_centre| ≤ Q0_MAX (0.30 rad) for every joint. The
+gravity-relevant offsets (shoulder ≈+0.2, elbow ≈−0.1) sit inside the band, so
+conditioning is essentially unchanged; the degenerate joints are pulled back to a
+symmetric, centred sweep.
+
+### Evidence
+Re-optimised: waist q0 +0.30 (was −1.41), shoulder −0.02, start velocity ✓ rest,
+band ✓, cond(Φ_b) ≈166–178 (within noise of the unconstrained value).
+
+### Impact
+Trajectory starts and sweeps about the joint centres. Re-run the design to save
+the centred version (the previous .npz still has the off-centre waist).
+
+---
+
+## 2026-06-23 — Rest-to-rest excitation (fix start lurch) — caught on hardware
+
+**Area:** `run_trajectories.py` · safety-critical
+
+### Problem / Motivation
+The first smoke run of the optimised design **lurched violently on engage** and
+the user aborted it. Cause: the Fourier trajectory's velocity at t=0 is Σ_k a_k,
+and only velocity *amplitude* was constrained — the saved design started at
+**2.5–2.8 rad/s** (waist/shoulder/wrist_rotate) from a standstill.
+
+### Change
+Added **rest-to-rest boundary constraints** to the optimiser: Σ_k a_k = 0 (zero
+boundary velocity) and Σ_k k·b_k = 0 (zero boundary acceleration) per joint —
+because the motion is periodic these hold at start, end, and every period. The
+feasible-start init is projected onto them; the feasibility verdict includes them.
+A `print_stats` readout and a hard `main()` **safety gate** abort any design with
+|q̇(0)| > 0.05 rad/s (also blocks stale pre-fix designs).
+
+### Evidence
+Re-optimised design: q̇(0) max |0.000| rad/s ✓, feasible, band ✓, cond(Φ_b) ≈176
+(slightly up from 140 — the equality constraints cost some freedom).
+
+### Impact
+Excitation now eases out of and back into standstill. The previously-saved design
+is invalidated (lurches) — re-run before collecting.
+
+---
+
+## 2026-06-23 — Excitation optimiser: reliable feasibility (feasible start + buffer)
+
+**Area:** `run_trajectories.py` optimiser robustness
+
+### Problem / Motivation
+With the tighter shoulder floor (−1.25) the cond(Φ_b) optimiser stopped finding a
+strictly-feasible design — restarts started from infeasible random points, one
+diverged (cond 8×10⁵), and the saved design violated limits by 0.5 rad (would trip
+the hardware box gate).
+
+### Change
+(1) Each restart now starts from `scale_to_limits` (amplitudes feasible for all
+pos/vel/accel) with q0=HOME — SLSQP begins feasible and only maintains it.
+(2) Inward limit buffer (0.04 rad, 0.10 rad/s) so the full-rate trajectory's
+between-grid peaks stay within true limits. (3) Feasibility verdict evaluated
+against the TRUE limits + band (the optimiser constraints are buffered), matching
+the hardware gates.
+
+### Evidence
+Now returns `feasible=True` with all joints ✓ and band ✓ inside true limits;
+cond(Φ_b) ≈120–150 (improves with iterations), shoulder·elbow corr ≈0.57 (the
+clamp-floored workspace ceiling, still richer/better-conditioned than old seed-42
+data at 236).
+
+### Impact
+Design step is now dependable. Re-run → smoke → collect.
+
+---
+
+## 2026-06-23 — Shoulder floor −1.25 (anti-tip clamp collision) + stale-design gate
+
+**Area:** `run_trajectories.py` · new hardware collision constraint
+
+### Problem / Motivation
+Below shoulder ≈ −1.3 the shoulder link collides with the anti-tip clamp securing
+the base (observed on hardware). The float sweep and the first optimised design
+reached shoulder −1.78 — unsafe.
+
+### Change
+Raised `LIMITS_LO[shoulder]` −1.78 → **−1.25** (0.05 rad below the −1.3 collision
+point for execution-overshoot margin). Added a **box-limit safety gate** in
+`main()`: a design whose raw trajectory exceeds the current box limits (e.g. a
+design saved before this floor) aborts instead of being silently clipped into a
+distorted path.
+
+### Evidence
+The prior `outputs/excitation_design.npz` (shoulder −1.782) now trips the gate
+(box violation +0.532 rad → ABORT). Compiles.
+
+### Impact
+The first optimised design is **invalidated** — must re-run
+`run_trajectories.py --design-only --save outputs/excitation_design.npz`. The
+tighter shoulder range may raise the achievable shoulder·elbow corr (less
+decorrelation room); judge on the re-run.
+
+---
+
+## 2026-06-23 — collect_200hz.sh --design: replay a vetted excitation deterministically
+
+**Area:** `collect_200hz.sh` + `run_trajectories.py` (`--save`/`--load`)
+
+### Problem / Motivation
+The cond(Φ_b) optimiser is now multi-minute and multistart-random, so re-running
+it live inside the gated collection would be slow and non-reproducible (the
+collected trajectory wouldn't match the one vetted offline).
+
+### Change
+`run_trajectories.py` gained `--save`/`--load` (.npz of a,b,q0). `collect_200hz.sh`
+gained `--design PATH`, which passes `--load` to the trajectory script (skipping
+the optimiser) so collection replays the exact approved design; the legacy
+`--seed` path is unchanged when `--design` is omitted. The band safety gate and
+all collection gates still run.
+
+### Evidence
+`bash -n` clean; `--load outputs/excitation_design.npz` reproduces the saved
+design (cond(Φ_b) 83.6, shoulder·elbow corr 0.362, band ✓).
+
+### Impact
+Design-once-offline → collect-deterministically. Workflow: vet with
+`run_trajectories.py --design-only --save`, then
+`collect_200hz.sh --design <npz>`.
+
+---
+
+## 2026-06-23 — Coupled shoulder–elbow collision band → excitation constraint
+
+**Area:** `run_trajectories.py` · turns the measured reachable envelope into the
+optimiser constraint · `control/pd_grav_control.py --float` produced the data
+
+### Problem / Motivation
+Opening the shoulder range for the new excitation needs the real collision-safe
+shoulder/elbow set, not an independent box (the box's shoulder-up + elbow-extended
+corner collides). Mapped it by hand in float mode.
+
+### Change
+From the float sweep (`data/float_envelope_20260623_113036.csv`, full-area sweep,
+confirmed by the user) the safe set is a **diagonal band** elbow ≈ −0.7·shoulder
++ offset: fitted `elbow_max=−0.71·sh+0.30`, `elbow_min=−0.67·sh−0.26`, ~0.56 rad
+elbow freedom at fixed shoulder. Encoded as `SH_EL_BAND_HI/LO` (+0.08 rad inward
+margin), enforced on the sampled trajectory in the optimiser, reported in
+`print_stats`, and a hard **safety gate** aborts collection if a design breaches
+it (the per-joint clip can't enforce a coupled constraint). Shoulder/elbow box
+limits opened to the swept extremes (shoulder [−1.78,1.38], elbow [−1.36,1.58]).
+
+### Evidence
+A partial design run (2 restarts, 110 iters) inside the band: cond(Φ_b) 236→**89**,
+shoulder·elbow m·c_y corr **+0.62→+0.42**, band ✓ (slack +0.08). Not yet strictly
+feasible (minor limit overshoots — needs more iterations).
+
+### Impact
+Trajectory redesign demonstrably reduces the first-moment collinearity within the
+real safe set. **Open question:** the band is itself a near-linear shoulder–elbow
+coupling (≈0.56 rad independent freedom), so corr may plateau ~0.4 — a
+**workspace-geometry ceiling** on first-moment separability. If the converged
+design and re-identified model still lump, the next lever is a known payload to
+break the mass symmetry (not trajectory design). Next: full converged design run
+→ collect → re-identify.
+
+---
+
+## 2026-06-23 — Float/compliant mode in pd_grav_control (reachable-envelope mapping)
+
+**Area:** `control/pd_grav_control.py` · `--float` + `--go-home` · supports the
+shoulder/elbow coupled-limit design for the new excitation
+
+### Problem / Motivation
+Designing the new excitation needs the *real* collision-safe shoulder/elbow
+reachable set (the lumping fix requires opening the shoulder-forward range, but
+only within a coupled envelope, e.g. elbow→1.0 only when shoulder≈−1.0). Best
+measured empirically by hand-moving the arm.
+
+### Change
+Added `--float`: pure gravity-compensation, **no position term** — the arm holds
+its own weight but is freely backdrivable by hand. Disables the position/
+tracking-error kill (the operator moves it far on purpose); soft limits + current
+caps + a raised velocity backstop remain. `--go-home q…` moves the arm to a start
+pose in position mode (timed profile, raw interface) before engaging. On stop it
+writes a **CSV of recorded joint angles** (`data/float_envelope_*.csv`) and prints
+the shoulder/elbow ranges swept. Reuses the tested current-mode handoff/parking.
+
+### Evidence
+Byte-compiles; reuses the validated gravity + safety path (only the position term
+and the position kill are gated off in float). Hardware run pending (user).
+
+### Impact
+Enables recording the real reachable envelope to fit the coupled shoulder/elbow
+limit, which then becomes a constraint in the cond(Φ_b) excitation optimiser.
+
+---
+
+## 2026-06-23 — Implement the cond(Φ_b) excitation objective (+ free q0, multistart)
+
+**Area:** `run_trajectories.py` · fixes the wrong-objective defect from the audit
+entry below
+
+### Change
+Replaced the excitation optimiser's objective `cond([q̇; q̈])` (kinematic) with
+**`cond(Φ_b)`** — the condition number of the actual base identification
+regressor (paper Eq. 11), built via `sf.regressor_fast` + `find_base_parameters`
+over one fundamental period. Made the per-joint offsets **q0 free design
+variables** (paper does this; gravity conditioning depends on the operating
+point). Added **multistart** (`--restarts`, q0 jittered per restart), `--maxiter`,
+`--design-only` (optimise + report without ROS/hardware), and a startup readout
+of achieved `cond(Φ_b)` and the shoulder·elbow `m·c_y` correlation. The hardware
+import is now lazy so the design runs ROS-free; the initial move targets the
+trajectory start (= q0), not HOME.
+
+### Evidence
+A short (24-sample grid, 18-iter, single-restart) check drops `cond(Φ_b)` 807 → 116.
+**Caveat:** the shoulder·elbow `m·c_y` correlation barely moved (+0.640 → +0.631)
+on that partial/infeasible run — global conditioning ≠ targeted first-moment
+decorrelation. A full feasible run (higher `--maxiter`/`--restarts`) is needed to
+judge; if the correlation does not drop, add an explicit shoulder/elbow column-
+correlation penalty on top of the paper's criterion.
+
+### Performance / who-runs
+One objective eval ≈ 0.25 s (Python-loop regressor over 80 samples); SLSQP
+finite-diff gradient makes it ~17 s/iteration → the full optimise is multi-minute.
+**User runs it** (`python3 run_trajectories.py --design-only` first to vet the
+design, then without `--design-only` to collect). Defaults: grid 80 samples,
+6 restarts, maxiter 200.
+
+### Impact
+Excitation design now targets the regressor conditioning that governs first-moment
+identifiability. Next: a full design run, judge `cond(Φ_b)` + shoulder/elbow corr,
+then (if needed) add the targeted penalty, then recollect + re-identify.
+
+---
+
+## 2026-06-23 — Excitation-trajectory audit: optimiser conditioned the wrong matrix
+
+**Area:** `run_trajectories.py` (excitation design) · root-cause audit vs the
+paper before re-identification · analysis only (fix follows)
+
+### Problem / Motivation
+The hardware first-moment lumping (entry above) showed the shoulder/elbow gravity
+split is unidentifiable from our data. We audited the excitation generator against
+the paper (§3.2, Eq. 7 / Eq. 11) to find why.
+
+### Finding
+The kinematic form is faithful to the paper (Fourier, Δf=0.1 Hz, N_f=5,
+900 s @ 200 Hz, SLSQP ≈ fmincon). But the **conditioning objective is wrong**:
+the paper minimises `cond(Φ_b)` — the condition number of the actual **base
+identification regressor** (Eq. 11, which contains the gravity/angle columns) —
+whereas `run_trajectories.py` minimises `cond([q̇; q̈])`, a purely **kinematic**
+velocity/acceleration matrix. First-moment (gravity) conditioning was therefore
+never optimised, leaving the shoulder/elbow first moments collinear → lumping.
+
+### Evidence (measured on the recorded data)
+cond(Φ_b) = 236 (200 Hz run) / 2 765 (May run); shoulder·elbow `m·c_y` column
+correlation +0.62 (200 Hz) — the collinearity behind the lumping. Secondary
+deviations: q0 fixed at HOME (paper frees it); SLSQP does not converge (degenerate
+cond→1.0 on re-run); shoulder forward range capped at +0.17 rad (paper ±1.76);
+accel limit 10 vs ~200–500 rad/s². Full table in THESIS_NOTES (2026-06-23
+excitation-trajectory audit).
+
+### Impact
+Reframes re-identification: the model wasn't wrong for lack of a solver — it was
+identified from data that never made the first moments separable. Fix (next):
+swap the objective to cond(Φ_b), free q0, open the shoulder range, multistart the
+optimiser. Re-run: regenerate the excitation, recollect, re-identify.
+
+---
+
+## 2026-06-23 — Held-out cross-validation (post-DH-fix) + a first-moment lumping diagnosis
+
+**Area:** identification validation · `compare_urdf_performance.py` (held-out) +
+`control/pd_grav_control.py` (hardware gravity-source swap) · no code change
+
+### Problem / Motivation
+The control phase stalled on a ~46 mm EE error dominated by shoulder gravity
+over-prediction. Before re-collecting data we tested whether the *existing* v1-5
+(post-DH-fix, `cfg-9ef2c992`) models already generalise, and which is the better
+gravity source for the controller. CLAUDE.md gates the control phase on a
+*validated* URDF, defined by low **held-out** torque-prediction error — which we
+had not yet measured for the post-fix models.
+
+### Experiment & result
+**(1) Held-out torque cross-validation** (`--friction --drop-glitches`), each
+model predicting the dataset it was NOT identified from. Friction-fitted mean
+RMSE: 200 Hz→May 1.222 Nm, May→200 Hz **0.303 Nm**; both crush factory
+(2.066 / 0.719 Nm) — the DH fix is re-confirmed fully held-out. But the **shoulder
+is asymmetric**: May→200 Hz shoulder R² **+0.81** (RMSE 0.76 vs no-model 1.69),
+while 200 Hz→May shoulder R² **−1.9** (worse than commanding zero — it
+over-predicts out-of-sample). So the 200 Hz shoulder defect is **real and
+held-out**, not a held-in artifact (likely high-speed rotor inertia `Ia·q̈`
+absorbed into the shoulder first moment).
+
+**(2) Hardware gravity-source swap** — ran the controller on the May URDF
+gravity. The two models AGREE on shoulder gravity (−241 vs −239 mA) but disagree
+massively on **elbow** (May −94 vs 200 Hz −602 mA; measured holding −683). On
+hardware the May model droops the elbow **−0.349 rad** (under-compensates 7×)
+while the shoulder droop is unchanged. The swap made things worse.
+
+### Interpretation
+Classic **first-moment null-space lumping**: the shoulder and elbow first-moment
+regressor columns are nearly collinear for these (shared-excitation) trajectories,
+so the optimiser can shuffle gravity between the two joints without hurting the
+*total* chain-torque fit. Held-out cross-val doesn't catch it because both
+datasets share the excitation structure. The 200 Hz model happens to split it
+physically (elbow −602 ≈ measured), the May model doesn't.
+
+### Impact / decisions
+- **Controller stays on the 200 Hz model** (best per-joint gravity split: elbow
+  correct, shoulder slightly over). The May swap is reverted.
+- **Re-identification is now justified with a specific target:** design excitation
+  that **decorrelates shoulder vs elbow gravity** (move one while the other is held
+  at varied fixed angles, slowly) to break the collinearity. Generic
+  "re-identify the shoulder" was the wrong framing.
+- No re-run needed yet; next is excitation-trajectory design.
+
+### Open questions / assumptions
+- Friction is refit on the eval data (gravity/inertia are the held-out part).
+- The ~1.7× constant static over-prediction (stiction, CHANGELOG 2026-06-13) is a
+  separate physical effect, not addressed by re-identification.
+
+---
+
+## 2026-06-23 — Integral term (PID + gravity comp) to kill the steady-state droop
+
+**Area:** `control/pd_grav_control.py` · roadmap stage 2 (accuracy) · opt-in
+`--ki-scale`
+
+### Problem / Motivation
+Pure PD + gravity-comp leaves a **steady-state droop** because the gravity model
+is imperfect (the shoulder first-moment over-prediction, the forearm_roll
+constant-FF residual). The 2026-06-18 end-to-end run held the EE with ≈46 mm
+error, dominated by a +0.105 rad shoulder droop. A re-confirmation hold today
+(after the velocity glitch fix — held >40 s, no false kill) showed droop
+`[0, +0.058, −0.004, −0.216, −0.153, −0.003]` rad. An integral term is the
+standard, lowest-effort way to drive that residual → 0 without needing a better
+model.
+
+### Change
+Added an optional integral term to the control law:
+`u = Kp·err + Ki·∫err·dt − Kd·q̇ + α·G_mA(q)`. Controlled by `--ki-scale`
+(default **0 = off**, preserving the verified PD+G behavior; sweep up like α).
+Per-joint `KI_BASE` (larger on the proximal gravity joints) and an anti-windup
+clamp `I_CAP` bounding each joint's integral *contribution* in mA. Integration is
+**gated** until after the setpoint ramp (`frac≥1`) and the grace window, so it
+never winds up on the deliberately large, shrinking engage-transient error. The
+integral contribution is logged (new cols 32:38) for analysis.
+
+### Evidence
+Byte-compiles; logic is offline-reasoned (no hardware yet). Anti-windup cap keeps
+a saturated integral well under the gravity load, so it cannot by itself overpower
+the arm. Hardware ki-sweep pending.
+
+### Impact
+Roadmap stage 2 (the biggest EE-accuracy win) is implemented and ready to sweep
+on hardware. Expected: droop → ~0 at the held pose, shrinking the 46 mm EE error.
+Re-run: a `--ki-scale` sweep (0 → 0.5 → 1.0) at the standard pose, compare droop.
+
+### Open questions / assumptions
+- Integral gains are first guesses; the sweep calibrates them. Watch for slow
+  oscillation (too-high Ki against the noisy Dynamixel velocity / Kd damping).
+- Also cleaned up unresolved git merge-conflict markers accidentally committed
+  into this changelog (the 06-18 vs 06-14 entry seam); both entry sets retained.
+
+---
+
+## 2026-06-18 — END TO END: commanded the EE to a target position on the real arm
+
+**Area:** `control/pd_grav_control.py` (velocity glitch-rejection fix) · full goal
+pipeline validated on hardware
+
+### Result
+Ran the complete pipeline on the real arm: target EE position [0.30, 0, 0.40] m →
+`ik_solve` → joint targets → `pd_grav_control --hold-pose` held the EE there for
+**25 s on URDF gravity**. Kinematics are exact (commanded setpoint FK = target to
+<0.1 mm). Real-world EE accuracy at the settled pose: **|error| ≈ 46 mm**
+([−30, +17, +30] mm), dominated by a **+0.105 rad shoulder droop** — i.e. the
+*dynamic* shoulder-gravity over-prediction (first-moment error), not kinematics.
+
+### Fix (this entry's code change)
+The 25 s hold ended on a **false velocity kill**: a single sample read 100 rad/s
+on all joints (a timer-burst near-zero `dt` makes Δq/dt explode). Added glitch
+rejection to the velocity filter — samples with `dt < 4 ms` or a non-physical
+estimate (>8 rad/s; the arm tops out ~3–4) reuse the last filtered velocity and
+don't advance the filter state. Hold itself was stable (elbow droop +0.004,
+jitter 0.010 rad over 25 s).
+
+### Impact
+The thesis goal — hold via URDF gravity → FK → IK → command the EE anywhere — is
+demonstrated. The accuracy bottleneck is now clearly the shoulder gravity model;
+two complementary fixes: (a) re-identify the shoulder first-moment; (b) add an
+**integral term** (PID + gravity comp) to drive steady-state droop → 0 despite the
+model error. Either would shrink the 46 mm.
+
+### Open questions / assumptions
+- 46 mm is at one pose; EE error will vary with the shoulder load (pose-dependent
+  bias). Map it across poses for a thesis figure.
+
+---
+
+## 2026-06-18 — Inverse kinematics (`tools/ik_solve.py`): close the EE-pose → joint-target loop
+
+**Area:** `tools/ik_solve.py` (new) · roadmap step 3 · same URDF/Pinocchio model as
+the controller
+
+### Problem / Motivation
+To "command the end-effector to any position" we need IK: desired EE pose → joint
+angles to use as the controller's setpoint.
+
+### Change
+New damped-least-squares (Levenberg–Marquardt) IK on the EE frame Jacobian
+(`ee_link`), using the identified URDF via Pinocchio — position-only by default
+(the 6-DoF arm leaves orientation free), `--rpy` for a full 6-DoF pose. Clamps to
+URDF joint limits each iteration and checks the result against the controller's
+conservative software limits; prints a ready-to-run `pd_grav_control --hold-pose`
+command. Workflow: `ik_solve --xyz X Y Z` → joints → controller holds the EE there.
+
+### Evidence
+Round-trip (IK of the test-pose EE position) recovers the pose to **0.10 mm**;
+a fresh target [0.30, 0, 0.40] converges to **0.06 mm**, within soft limits. Needs
+ROS sourced for real Pinocchio.
+
+### Impact
+Roadmap steps 3 and (point-to-point) 4 are functional: the full goal pipeline —
+hold via URDF gravity → FK → IK → command EE anywhere — now exists. Smooth
+time-parameterized `q_ref(t)` trajectory tracking is the remaining refinement.
+
+### Open questions / assumptions
+- Position-only IK picks *an* orientation (redundancy); use `--rpy` to constrain.
+- IK does not yet check self-collision; targets near limits should be eyeballed.
+
+---
+
+## 2026-06-18 — URDF-in-the-loop: gravity (and FK) from the identified URDF via Pinocchio
+
+**Area:** `control/pd_grav_control.py` · puts the identified URDF at the centre of
+the control stack (gravity now, FK added, IK next) · see `CONTROL_ROADMAP.md`
+
+### Problem / Motivation
+The controller computed gravity from the φ vector. The thesis goal is to control
+*from the URDF*, and the same URDF model also supplies forward/inverse kinematics
+— so loading it once with Pinocchio unifies gravity + FK + IK.
+
+### Change
+Added `--gravity-source {urdf,phi}` (default `urdf`) and `--urdf` (default the
+validated 200 Hz URDF `…cfg-9ef2c992…cfg-3ef0a00c.urdf`). In URDF mode gravity =
+`pin.computeGeneralizedGravity` ÷ `EFFORT_SCALE` (Pinocchio joint order already
+matches `ARM_JOINTS` for this URDF). Graceful fallback to φ if real Pinocchio is
+unavailable (gated on `hasattr(pin,'buildModelFromUrdf')` — the ROS gotcha).
+Added `ee_pose(q)` (forward kinematics of frame `ee_link`); startup now prints the
+gravity source, a **URDF↔φ equivalence self-check**, and the **EE pose (FK)**.
+
+### Evidence
+URDF gravity matches the φ vector to **1.3e-7 Nm** over 50 random q; gravity at
+home/test poses identical to the φ values used in all prior runs (shoulder −791 /
+−233 mA). FK gives sensible EE positions (home [0.36,0,0.56] m). So behavior is
+unchanged; only the source of the (identical) gravity moved to the URDF.
+
+### Impact
+Roadmap steps 1b (URDF gravity) and 2 (FK) are implemented; IK (step 3) is next,
+from the same Pinocchio model. Requires ROS sourced for real Pinocchio (the
+controller already runs in that environment).
+
+### Open questions / assumptions
+- EE frame assumed `ee_link`; the identified URDF is arm-only (nq=6, no gripper).
+- Hardware re-confirmation of an unchanged hold in URDF mode is pending.
+
+---
+
+## 2026-06-18 — RESULT: model-based PD+gravity-comp holds the arm (dual-motor joints included)
+
+**Area:** `control/pd_grav_control.py` · first **hardware-confirmed** model-based
+control result · resolves the dual-motor current-control question
+
+### Problem / Motivation
+First hardware bring-up of the PD+gravity-comp regulator. Early runs looked like
+the dual-motor joints (shoulder/elbow, which have shadow motors) could not be
+torque-controlled — the elbow dropped under current control. Needed to determine
+whether that was a hardware limitation or a controller bug.
+
+### Change / investigation (chronological, all in `pd_grav_control.py`)
+Iterative hardware debugging fixed a chain of real bugs, none of which was a
+hardware limit:
+1. Setpoint captured from a bogus first `joint_states` (all −π) → settle + median
+   + joint-limit gate.
+2. **Never command zero current** on stop/kill — it dropped the gravity-loaded
+   elbow to the floor; park straight to position mode (servo PID holds).
+3. **Mode-switch transient**: switching position→current torque-cycles the
+   motors (limp window); the heavy elbow free-falls ~0.5 rad before control
+   engages and enters at ~2.9 rad/s.
+4. Kill debounce — the mode switch emits a 1-sample garbage position reading
+   (jumps to the joint limit) and a velocity glitch.
+5. **Ramped setpoint** (capture post-switch position, ramp reference to q_d over
+   `--recover-time`; kills use tracking error) → gentle recovery, no violent
+   over-correction that previously coupled into the shoulder.
+6. Removed the current-blend handoff (it muzzled control authority during the
+   transient) and switched the Kd damping term to a **filtered finite-difference
+   velocity** — the raw Dynamixel velocity register is too noisy/underreported
+   (THESIS_NOTES) to damp with.
+
+### Evidence (hardware, α=1.0, gain×0.5, test pose [0,−0.6,0.5,0,0,0])
+Two runs held **15–18 s** with the elbow at the setpoint: **droop −0.00/−0.06 rad,
+jitter std ≈ 0.0005 rad (0.03°)** — a stable, non-oscillating hold. The elbow
+settled at **−594 mA, essentially its model gravity (−602 mA)** with zero droop,
+i.e. the identified model carries the dual-motor elbow. Shoulder held with
++0.05–0.07 rad droop. **The "dual-motor can't be torque-controlled / shadow gives
+half torque" hypothesis is FALSIFIED.** Remaining kills were all re-runs *without*
+re-posing (degraded start) — operational, not a controller fault.
+
+### Impact
+The thesis' control half has a working model-based controller. Open items:
+(a) the ~0.59 rad entry dip from the mode-switch limp window (benign, recovers in
+~2.3 s; polish by engaging from a low-gravity state / trajectory lead-in);
+(b) α sweep to read the per-joint gravity scale from steady-state droop;
+(c) shoulder/wrist droop suggests their model gravity is slightly off-scale.
+
+### Open questions / assumptions
+- Operational: must `set_pos` to a clean pose before each run.
+- Base must be physically secured — an early underdamped oscillation nearly
+  tipped the platform.
+- forearm_roll FF uses its measured holding current (model known-bad there).
+
+---
+
+## 2026-06-18 — PHASE TRANSITION: first model-based controller (PD + gravity compensation)
+
+**Area:** `control/pd_grav_control.py` (new) · starts the thesis' control half ·
+feeds forward the identified gravity model · (hardware results: see the
+2026-06-18 RESULT entry above)
+
+### Problem / Motivation
+The control phase was gated on a validated gravity model. With the DH fix and the
+static-gravity confirmation (2026-06-13: shoulder gravity SHAPE r=0.997 in the
+real world; verdict "safe to start PD+gravity-compensation"), that gate is
+cleared. `control/trq.py` already had a current-mode PID cascade but with gravity
+compensation **commented out** (the Pinocchio path, lines ~376–379) — so no
+model-based control had actually run.
+
+### Change
+New PD + gravity-compensation **regulator** (holds a fixed setpoint, no
+trajectory yet). Law per joint, in mA:
+`u = Kp·(q_d − q) − Kd·q̇ + α·G_mA(q)`, where `G_mA(q)` is the IDENTIFIED gravity
+evaluated exactly as the static experiment validated it — `sysid_feasible`
+Newton-Euler ID at q̇=q̈=0, friction zeroed, divided by `EFFORT_SCALE` →
+master-motor mA (pure numpy, no Pinocchio in the loop). The gravity source is the
+200 Hz model `…cfg-9ef2c992.npy`.
+
+Safety improvements over `trq.py`: (1) **bump-free handoff** — read each joint's
+position-mode holding current and blend the command from there to the full law
+over `--ramp-in` s, so the arm stays gravity-supported through the mode switch
+(trq.py ramped from zero current, momentarily unsupporting it); (2) pure setpoint
+regulation; (3) per-joint soft position limits + current caps; (4) velocity /
+position-error kill switches; (5) SIGINT parks the arm in **position mode** (its
+PID holds the pose) rather than leaving it limp at zero current (which would
+collapse a loaded arm).
+
+### Evidence
+Offline gravity sanity (no ROS) at the 200 Hz model: waist ≈ 0 mA (gravity-free
+axis ✓), shoulder −791 mA at home → −233 mA folded back (q=[0,−0.6,0.5,0,0,0]) ✓,
+elbow ≈ −600 mA. Two flags: forearm_roll shows a spurious +150 mA even at home
+(the known joint-4 defect, CHANGELOG 2026-06-13) so its FF is untrustworthy;
+shoulder at home (791 mA) is near its 900 mA cap → bring-up must start at the
+folded test pose, not home.
+
+### Impact
+Opens the control half of the thesis. The **α sweep is also a clean closed-loop
+resolution of the 0.58 anomaly**: the gravity gain α that zeroes the steady-state
+droop (q_d − q) is the true gravity scale — α≈1 ⇒ identified gravity correct
+(0.58 was a position-mode stiction artifact) and precision computed-torque is
+viable; α≈0.58 ⇒ a real scale error remains. The regulator logs droop per run.
+
+### Open questions / assumptions
+- Default PD gains (`KP_BASE`/`KD_BASE`, `--gain-scale 0.5`) are conservative
+  guesses pending hardware tuning.
+- forearm_roll FF is known-bad; expect ~0.25 rad droop there at α=1 until joint 4
+  is fixed — consider zeroing its FF for clean shoulder/elbow tuning.
+- Master-mA command convention matches the identification/static-experiment space
+  (driver mirrors master→shadow on dual-motor shoulder/elbow).
+
+---
+
+## 2026-06-18 — Breakaway-current (stiction) test tooling
+
+**Area:** `control/breakaway_current.py` (new) · methodology for resolving the
+≈0.58 static-current anomaly · no results yet (hardware run pending)
+
+### Problem / Motivation
+The static-gravity experiment (2026-06-13) found steady holding current is
+~0.58× the identified gravity current with *perfect* gravity shape (shoulder
+r=0.997). The leading explanation is **gearbox stiction**: at standstill the
+geared XM540 holds part of the load by static friction, so the position-mode
+servo PID settles at the **low edge** of a stiction band rather than at true
+gravity. This needed a direct, model-free measurement to either confirm stiction
+(→ gravity model correct, PD+G safe) or expose a real gravity scale error.
+
+### Change
+New single-joint current-control test, built on the safe pattern in
+`tools/test_waist_current.py` (one joint in current mode, all others hold
+position; clean revert to position mode). For a joint at a fixed pose it ramps
+commanded current up from the measured position-mode holding current until the
+joint breaks away (`I_break+ = g + f`), then ramps down (`I_break- = g - f`),
+giving:
+- **stiction** `f = (I_break+ − I_break−)/2`
+- **stiction-free gravity** `g = (I_break+ + I_break−)/2`
+
+Safety: ramp starts at the actual holding current (no jump, model-free baseline);
+small steps; breakaway caught at a few-degrees position deviation → joint
+immediately handed back to its position PID and re-homed; hard current cap
+(`--max-current`, default 600 mA) and absolute abort window. Logs a CSV trace +
+results JSON to `data/`.
+
+### Evidence
+Pending — script byte-compiles; physics/safety reasoning above. Hardware run
+sequence: `waist` (gravity-free control, validates the rig with no runaway risk),
+then `shoulder` and `elbow` (the dual-motor geared joints the hypothesis targets).
+
+### Impact
+Resolves (or refutes) the stiction interpretation of the 0.58 factor and yields
+an independent gravity estimate per pose to cross-check the identified model —
+the last open question before committing to PD + gravity-compensation control.
+
+### Open questions / assumptions
+- `JointSingleCommand` cmd is interpreted as current (mA) in current mode and as
+  position (rad) in position mode — same convention `test_waist_current.py` and
+  `vel_osc.py` rely on.
+- Dual-motor joints (shoulder/elbow): commanding the master drives the shadow;
+  present current read is the master's — same mA convention as the static
+  analysis. The midpoint `g` should be compared to the identified gravity current
+  in the **same** master-mA space.
 
 ---
 

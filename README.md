@@ -81,7 +81,7 @@ and validation fails — see "Pinocchio / ROS gotcha" in `CLAUDE.md`. Do **not**
 | `figures/` | Saved plots |
 | `archive/` | Superseded code/models, kept for traceability: `identification/` (pre-SDP sysid variants), `collection/` (May-era 47 Hz collection flow), `npy/` (pre-artifact phi files), `urdf/` (pre-kinematics-fix URDFs, all invalid), `scratch/` |
 
-The validated deliverable is **`urdf/champion.urdf`** (`cfg-a92e984c`, 2026-06-13);
+The validated deliverable is **`urdf/champion.urdf`** (`cfg-27904c2e`, 2026-06-24);
 full provenance and claim-by-claim evidence map in `docs/RESULTS_INDEX.md`.
 
 ## Hardware facts (never violate silently)

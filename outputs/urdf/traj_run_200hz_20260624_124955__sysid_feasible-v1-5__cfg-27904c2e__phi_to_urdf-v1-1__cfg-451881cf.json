@@ -1,0 +1,36 @@
+{
+  "input_file": "outputs/npy/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e.npy",
+  "output_file": "outputs/urdf/traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e__phi_to_urdf-v1-1__cfg-451881cf.urdf",
+  "pipeline_name": "phi_to_urdf",
+  "pipeline_version": "1.1",
+  "config": {
+    "mode": "standalone",
+    "template": null,
+    "link_names": [
+      "waist_link",
+      "upper_arm_link",
+      "forearm_link",
+      "wrist_link",
+      "gripper_link",
+      "ee_arm"
+    ],
+    "robot_name": "viper300_sysid",
+    "mass_floor": 0.0,
+    "motor_inertia_Ia": {
+      "waist": 0.025594474673703155,
+      "shoulder": 1.7645366346476928e-06,
+      "elbow": 0.05930729119102083,
+      "forearm_roll": 8.886408403730545e-07,
+      "wrist_angle": 0.029793910263908208,
+      "wrist_rotate": 0.006872731882000476
+    }
+  },
+  "config_hash": "451881cf",
+  "created_at": "2026-06-24T12:42:27.447133+00:00",
+  "git_commit": "09b1375",
+  "source_checksum": "sha256:abd19d785cb85a29b692beb69b4f0e519a54b3a712bae6893881d184865af28c",
+  "content_length": 5637,
+  "hostname": "LAPTOP-T5MG86SM",
+  "python_version": "3.10.12",
+  "numpy_version": "2.2.6"
+}

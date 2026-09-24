@@ -1,0 +1,8 @@
+[INFO] [1782218924.649365296] [joint_state_recorder_200hz]: Recorder ready  →  data/traj_run_200hz_20260623_144838.csv  (duration=1260 s, no throttle — every message recorded)
+[INFO] [1782218924.650829096] [joint_state_recorder_200hz]: First joint-state message received — recording started (time base: header stamp).
+RECORDING_STARTED
+[INFO] [1782218995.116431281] [joint_state_recorder_200hz]: Signal 2 received — stopping.
+
+[recorder] Saved 14007 rows.
+[recorder] Span 70.5 s  →  effective rate 198.7 Hz
+[recorder] Dropout-sentinel rows (all arm joints ≈ −π): 5

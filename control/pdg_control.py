@@ -86,8 +86,8 @@ DEFAULT_KD = np.array([5.0, 350.0, 200.0, 10.0, 30.0, 25.0])
 DEFAULT_URDF = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "outputs", "urdf",
-    "traj_run_200hz_20260612_131613__sysid_feasible-v1-5__cfg-a92e984c__"
-    "phi_to_urdf-v1-1__cfg-3ef0a00c.urdf")
+    "traj_run_200hz_20260624_124955__sysid_feasible-v1-5__cfg-27904c2e__"
+    "phi_to_urdf-v1-1__cfg-451881cf.urdf")
 PAPER_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "external", "paper_model")
