@@ -100,6 +100,56 @@ exact; the α-sweep slopes remain the cleaner amplitude estimates.
 
 ---
 
+## Explicit M(q) and C(q,q̇): properties, PD+G vs computed torque, and the paper's M (2026-10-06)
+
+**What the paper did.** Ships M(q), V(q,q̇) (= C q̇) and G(q) as symbolic MATLAB
+functions in mA units. The controller is PD+G plus ERG. ERG uses M(q) only through
+a constant lower bound (`M ⪯ M(q)`), and M is served from Windows MATLAB over a
+TCP socket. M ≻ 0 is checked by 1° gridding, not enforced in the identification.
+
+**What we did.** Built M, C, G explicitly from the identified champion URDF in
+Pinocchio, with the reflected motor inertia Ia added as joint armature
+(`control/dynamics.py`), and verified them (`tools/check_dynamics_matrices.py`;
+numbers in CHANGELOG 2026-10-06):
+- **Same model as identified.** M from Pinocchio's CRBA matches M assembled
+  column by column from our own Newton–Euler code on φ (different frames, code
+  and algorithm) to 1e-8 relative.
+- **Physically sound.** Symmetric and positive definite over the controller
+  workspace (λ_min ≈ 0.009 kg·m², cond ≤ 48), and Ṁ − 2C skew-symmetric to 4e-9.
+  These are exactly the properties the PD+G Lyapunov argument
+  (Takegaki & Arimoto 1981) and computed-torque control rest on. Here they are
+  shown numerically for the identified model, not assumed.
+  Feasibility (pseudo-inertia ≻ 0 per link) already guarantees M ≻ 0. The
+  numerical check confirms the export chain did not break it.
+- **Right size on real data.** On the held-out run, adding our Mq̈ + Cq̇ cuts the
+  waist residual by 62 %, and the best-fit scale on the term is 0.97–1.04 for
+  waist/shoulder/elbow.
+
+**Why the controller is still PD+G.** The task is regulation and slow point-to-
+point motion on ramped references. In the torque budget, inertial + Coriolis
+torque is ≈ 13 % of gravity on shoulder/elbow, even at the much faster
+identification-excitation speeds. PD+G with exact G is globally asymptotically
+stable for set-points with no M or C (Takegaki & Arimoto). M and C only pay off
+for fast tracking. The natural thesis experiment is PD+G vs computed torque
+(or PD + inverse-dynamics feed-forward along q_ref) on a faster trajectory,
+comparing tracking error.
+
+**The paper's M disagrees with ours by ~10×.** The MATLAB files were translated
+mechanically (`tools/paper_dynamics.py`, verified: the translated G equals the
+authors' own Python port exactly, and their V equals the Christoffel C q̇ of their
+M to 7e-10). Their M diagonal is 10–29× ours, and adding their Mq̈ + V *worsens*
+the held-out residual on our data, with best-fit scale ≈ 0.1. Possible reasons:
+(i) the published `PhysicalParameter` vector differs from what the paper used;
+(ii) their inertial parameters were weakly excited and absorbed drive-side
+inertia; (iii) a difference between their arm and ours. Their ERG uses M only via
+a conservative constant lower bound, which tolerates such an error. **Framing:**
+report it as an observation on our hardware with the residual test as evidence.
+Do not claim the paper's model is wrong. It is also an argument for our
+explicit motor-inertia term: the Ia ≈ 0.03–0.06 kg·m² it identifies is a much
+smaller drive inertia than the paper's matrix implies.
+
+---
+
 ## Solver for the physically-feasible identification (Eq. 16)
 
 **The paper's tooling.** Momani & Hosseinzadeh use two *different* optimizers for

@@ -9,6 +9,119 @@ Entries are newest-first. Each follows the template at the bottom of this file.
 
 ---
 
+## 2026-11-13 — REVERTED: wrist_rotate working pose at +3.10 rad broke the wrist cable
+
+**Status: REVERTED the same day.** Running at wrist_rotate = +3.10 caused multiple
+wrist turns and the wrist cable broke. `LIMITS_HI[wrist_rotate]` is back to 2.80
+and all start poses are back to wrist_rotate = 0. Lesson: do not move a working
+pose to a joint's ±π edge to relieve cable tension; untwist the cable mechanically
+with the arm off. The original entry is kept below for the record.
+
+**Area:** `control/pd_grav_control.py` (`LIMITS_HI[wrist_rotate]` 2.80 → 3.14, now reverted) · operational
+
+### Problem / Motivation
+At the bench, `set_pos.py 0 -0.6 0.5 0 0 0` put the wrist cable under tension: on
+this arm the cable is slack at wrist_rotate ≈ +3.10 rad (≈ ±π), not at 0. The
+controller's soft limit (+2.80) would abort any setpoint there.
+
+### Change
+Raised the wrist_rotate upper soft limit to 3.14 (inside the URDF/driver ±π).
+New standard start pose: `set_pos.py 0 -0.6 0.5 0 0 3.10`.
+
+### Evidence
+`joint_states` at the slack pose: wrist_rotate = 3.100 rad. Byte-compiles.
+
+### Impact
+No model or result changes. Inside the 0.20 rad soft-limit band, positive
+current on wrist_rotate is scaled down (×0.2 at 3.10); fine for holding (its
+gravity is ≈ 0). Probable cause: cable routed/mounted half a turn off; a
+mechanical fix would let the wrist return to 0.
+
+---
+
+## 2026-10-06 — Explicit M(q), C(q,q̇), G(q) of the identified model + property checks + paper comparison
+
+**Area:** new `control/dynamics.py`, `tools/check_dynamics_matrices.py`,
+`tools/paper_dynamics.py` · analysis only — no identified artifact changes
+
+### Problem / Motivation
+The controller (`pd_grav_control.py`) uses only G(q) from the identified model.
+The supervisor asked whether the inertia and Coriolis matrices exist too. They
+did only *implicitly*, inside the RNEA call that `compare_urdf_performance.py`
+uses for validation. They had never been built as matrices, checked for their
+textbook properties, or compared with the paper's M/V (MATLAB-only, ~80k lines).
+They are also a prerequisite for computed-torque / inverse-dynamics feed-forward
+and for the paper's ERG (which needs M(q)).
+
+### Change
+- `control/dynamics.py` — `ArmDynamics`: `M(q)` (Pinocchio CRBA on the champion
+  URDF **plus diag(Ia)** from the (84,) φ via `model.armature`), `C(q,q̇)`
+  (`computeCoriolisMatrix`, the Christoffel factorisation), `G(q)`,
+  `inverse_dynamics`, `M_dot`, `to_mA`. Joints matched by name; arm-only nq=6.
+- `tools/paper_dynamics.py` — mechanically translates the paper's
+  `Mass_Inertia_Matrix_function.m`, `Coriolis_Vector_function.m`,
+  `Gravity_Compensationfunction.m` to Python at load time (comment/continuation
+  stripping, element-wise ops, 1-based indexing, long sums chunked to stay under
+  CPython's compile recursion limit). No hand porting, no MATLAB needed.
+- `tools/check_dynamics_matrices.py` — the verification (exit code 1 on FAIL).
+
+### Evidence
+`python3 tools/check_dynamics_matrices.py --csv data/traj_run_200hz_20260623_145333.csv --paper-budget`
+on the champion `cfg-27904c2e` (200 random states inside the controller limits):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | M (Pinocchio CRBA + Ia) vs M built from sysid's own Newton–Euler on φ | max rel. err 1.2e-8 |
+| 2 | Symmetry of the independently built M | 2.7e-15 kg·m² |
+| 3 | M ≻ 0 over the workspace | λ_min ∈ [0.0090, 0.0093], λ_max ∈ [0.18, 0.44] kg·m², cond ≤ 48 |
+| 4 | Ṁ − 2C skew-symmetric | rel. 3.9e-9 |
+| 5 | M q̈ + C q̇ + G == RNEA == sysid φ | 2.7e-15 / 4.9e-8 Nm |
+| 6a | Translator: paper G (.m) vs authors' Python port | exact (0.0) |
+| 6b | Paper self-consistency: V_paper vs Christoffel(M_paper)·q̇ | 6.7e-10 |
+
+Held-out residual test (0623 run, stride 40, 1405 samples, mA). Residual after
+each model's own G + identified friction, without vs with that model's Mq̈ + Cq̇,
+plus the least-squares scale k on that term:
+
+| model | | waist | shoulder | elbow | forearm_roll | wrist_angle | wrist_rotate |
+|---|---|---|---|---|---|---|---|
+| ours | no M,C | 514 | 215 | 92 | 201 | 63 | 13 |
+| ours | + M,C | **196** | **186** | **76** | 195 | 58 | 13 |
+| ours | best k | **0.99** | **1.04** | **0.97** | 0.69 | 0.69 | 0.47 |
+| paper | no M,C | 513 | 330 | 426 | 411 | 46 | 20 |
+| paper | + M,C | 1913 | 1030 | 905 | 1047 | 719 | 425 |
+| paper | best k | 0.18 | 0.07 | 0.11 | −0.02 | 0.04 | 0.01 |
+
+Our M, C are the right size on the three heavy joints (k ≈ 1) and remove 62 % of
+the waist residual. The paper's published M is 10–29× ours on the diagonal
+(λ_min 51 mA·s²/rad ≈ 0.12 kg·m² vs our 0.009). On our data it makes the
+prediction worse, with best scale ≈ 0.1.
+
+Torque budget on the same run (RMS, Nm): (Mq̈ + Cq̇)/G ≈ 0.13 on shoulder/elbow,
+0.28 forearm_roll, 0.82 wrist_angle. The waist has no gravity and is all inertia
+(Mq̈ 1.14 Nm). This is at identification-excitation speeds (q̇ RMS ≈ 0.6–1.1
+rad/s, q̈ ≈ 2–4 rad/s²), much faster than the controller's ramps.
+
+### Impact
+- No identified artifact changes; nothing to re-run.
+- M, C are ready for a computed-torque / feed-forward mode and for ERG's M(q)
+  (no MATLAB socket needed).
+- Thesis: the properties in checks 3–4 are the assumptions behind the PD+G
+  stability argument (Takegaki & Arimoto) and computed-torque control.
+
+### Open questions / assumptions
+- The paper-M discrepancy holds on *our* arm and data. The repo's
+  `PhysicalParameter` vector may differ from what the paper used, or their
+  inertial parameters may be weakly excited. Their M enters ERG only through a
+  constant lower bound, so a scale error would not have shown up there. Do not
+  claim the paper is wrong; report it as an observation.
+- Checks 6b and 6c prove the translation is internally consistent and reproduces
+  G exactly. An index error inside `PhysicalParameter` would hit M and V together
+  and pass 6b; the parameter counts (73 / 54) are asserted by inspection only.
+- forearm_roll/wrist k ≈ 0.5–0.7: smaller joints, more friction/noise share.
+
+---
+
 ## 2026-09-25 — Merged `main` into `Refactoring`; `urdf/champion.urdf` refreshed to the 2026-06-24 model
 
 **Area:** `urdf/champion.urdf` · `docs/RESULTS_INDEX.md` · `README.md` · branch merge

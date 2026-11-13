@@ -679,6 +679,22 @@ def main():
         print('        + / - = bigger/smaller step      q = quit (park safely)')
         print(f'        step = {args.step_size*1000:.0f} mm   '
               f'(ignored during the {args.recover_time:.0f}s engage ramp)\n')
+
+        # One live status line, rewritten in place (\r + clear-to-end-of-line), so
+        # the key help above stays on screen instead of scrolling away.
+        last_note = ''
+
+        def show_status(note=None):
+            nonlocal last_note
+            if note is not None:
+                last_note = note
+            x = node.teleop_xyz
+            sys.stdout.write(f'\r\033[K[teleop] step {args.step_size*1000:.0f} mm | '
+                             f'EE target xyz=[{x[0]:+.3f}, {x[1]:+.3f}, {x[2]:+.3f}] m'
+                             f'{last_note}')
+            sys.stdout.flush()
+
+        show_status()
         with KeyReader() as kr:
             while rclpy.ok() and not node.stop_requested and not node.estopped:
                 if t_end is not None and time.time() >= t_end:
@@ -692,11 +708,11 @@ def main():
                     break
                 if key in ('+', '='):
                     args.step_size = min(args.step_size * 1.5, 0.05)
-                    print(f'[teleop] step = {args.step_size*1000:.0f} mm')
+                    show_status()
                     continue
                 if key in ('-', '_'):
                     args.step_size = max(args.step_size / 1.5, 0.001)
-                    print(f'[teleop] step = {args.step_size*1000:.0f} mm')
+                    show_status()
                     continue
                 # Only jog once the arm has settled at the hold (ramp done).
                 if node.t_switch is None or time.time() - node.t_switch < args.recover_time:
@@ -704,10 +720,9 @@ def main():
                 status = node.teleop_jog(key)
                 if status is None:
                     continue
-                xyz = node.teleop_xyz
-                tag = '' if status == 'ok' else f'  [{status}]'
-                print(f'[teleop] EE target xyz=[{xyz[0]:+.3f}, {xyz[1]:+.3f}, '
-                      f'{xyz[2]:+.3f}] m{tag}')
+                # Keep the line short: a wrapped line can't be rewritten with \r.
+                show_status('' if status == 'ok' else '  [BLOCKED: out of reach/limit]')
+        print()  # end the live status line so later output starts on a fresh line
     else:
         while rclpy.ok() and not node.stop_requested and not node.estopped:
             if t_end is not None and time.time() >= t_end:

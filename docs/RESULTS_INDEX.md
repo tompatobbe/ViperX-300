@@ -45,6 +45,8 @@ reproduce commands: `docs/HANDOVER.md` §CURRENT STATE.
 | Kinematics bug root-cause (standard vs modified DH) and its fix | `tools/test_fk_equivalence.py`, `tools/test_phi_urdf_consistency.py` | CHANGELOG 2026-06-13 "ROOT CAUSE FOUND & FIXED" |
 | Effort units are Dynamixel mA; τ = (mA/1000)·2.409·motors | — | CHANGELOG 2026-06-10; CLAUDE.md "Conventions" |
 | Reflected motor inertia Ia is identifiable (~0.8 kg·m² shoulder) but doesn't dethrone (pre-fix analysis) | `sweep_gamma_ia.sh` | CHANGELOG "γ retune"; THESIS_NOTES "Reflected motor inertia" |
+| Explicit M, C of the identified model: equal to the identified φ (1e-8), M ≻ 0 (cond ≤ 48), Ṁ − 2C skew-symmetric; Mq̈ + Cq̇ explains held-out torque with scale ≈ 1 | `tools/check_dynamics_matrices.py` (`control/dynamics.py`) | CHANGELOG 2026-10-06 "Explicit M(q), C(q,q̇), G(q)"; THESIS_NOTES "Explicit M(q) and C(q,q̇)" |
+| Paper's published M is ~10–29× ours and worsens held-out prediction on our arm (best scale ≈ 0.1) | `tools/check_dynamics_matrices.py --paper-budget` (`tools/paper_dynamics.py`) | same entries |
 | Encoder velocity register is lagged/attenuated — differentiated position is the right input | — | CHANGELOG 2026-06-11; THESIS_NOTES "Encoder velocity vs differentiated position" |
 
 ## Baselines the champion is compared against

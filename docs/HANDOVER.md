@@ -1,9 +1,39 @@
 # HANDOVER — start here
 
-**Last updated:** 2026-06-24 (control phase: teleop bring-up).
+**Last updated:** 2026-11-13 (lab prep for supervisor demo; teleop working).
 **Phase:** **control.** Identification is closed — new held-out-validated champion
 exists (beats CAD 55 %, matches the paper benchmark). Now standing up the
 PD+gravity controller and Cartesian teleop on hardware.
+
+---
+
+## ⇒ SESSION NOTES — 2026-11-13 (lab, demo prep)
+
+**⚠ WRIST CABLE BROKE — replaced the same day (2026-11-13).** Keep wrist_rotate = 0.
+- At wrist_rotate = 0 the wrist cable looked tensioned. Torquing off wrist_rotate,
+  turning it by hand and reading `joint_states` gave a "slack" reading near ±π
+  (−3.15, then +3.10). The working pose was moved to wrist_rotate = +3.10 and the
+  controller's wrist_rotate limit raised 2.80 → 3.14 to allow it.
+- **That was wrong.** Running at +3.10 led to multiple wrist turns and the **cable
+  broke**. Lesson: never move a working pose to the ±π edge of a joint to "fix"
+  cable tension. A wrist at ±π can end up a full turn off, which twists the cable
+  further. Untwist the cable mechanically (arm powered off) and keep wrist_rotate = 0.
+- **All wrist changes reverted** (limit back to 2.80; runbook back to `… 0 0 0`).
+  CHANGELOG 2026-11-13.
+- Before the next run: replace the cable, inspect it at wrist_rotate = 0 with the
+  arm powered off, and check that `joint_states` reads wrist_rotate ≈ 0 there.
+
+**Also today**
+- **Teleop works on the current champion (`cfg-27904c2e`)**
+  (`python3 control/pd_grav_control.py --teleop`), closing the 2026-06-24 open item
+  where teleop tripped the forearm_roll kill. (Run was at the wrong wrist angle; the
+  controller itself was fine.)
+- **Teleop display:** the key help now stays on screen; one status line
+  (step size + EE target, `[BLOCKED…]` when unreachable) is rewritten in place.
+
+**Still open**
+- Gripper heats up during current-mode control (stays energised).
+- Observations from the hold / demo to add here: _(droop numbers, anything odd)_
 
 ---
 

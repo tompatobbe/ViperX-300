@@ -30,6 +30,7 @@ file is the *target pipeline and the decision points*.
 | 2 | **FK**: joint angles → EE pose | **Code done** — `ee_pose()` (`framesForwardKinematics`, frame `ee_link`); printed at startup |
 | 3 | **IK**: desired EE pose → joint targets | **Code done** — `tools/ik_solve.py` (damped least-squares on the frame Jacobian); round-trip 0.1 mm; checks joint limits |
 | 4 | Feed IK targets to the controller and **track** them | **Working (point-to-point)** — `ik_solve` xyz → `--hold-pose`; controller ramps the setpoint there. Smooth `q_ref(t)` trajectories = future refinement |
+| 5 | Explicit **M(q), C(q,q̇)** (+Ia armature) for computed torque / ERG | **Code done + verified** — `control/dynamics.py`, `tools/check_dynamics_matrices.py` (CHANGELOG 2026-10-06). Not yet used by the controller |
 
 ## Key unification: one URDF + Pinocchio gives all three pieces
 
